@@ -275,6 +275,128 @@ fn test_duplicate_registration_panics() {
     client.register_issuer(&issuer, &map![&env]);
 }
 
+// ============== CROSS-ROLE REGISTRATION GUARD (Issue #189) ==============
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_register_issuer_then_buyer_panics() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, RegistryContract);
+    let client = RegistryContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let issuer = Address::generate(&env);
+    let metadata = map![&env];
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "initialize",
+            args: (admin.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.initialize(&admin);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &issuer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "register_issuer",
+            args: (issuer.clone(), metadata.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.register_issuer(&issuer, &metadata);
+
+    assert!(client.is_verified(&issuer));
+    assert_eq!(client.get_profile(&issuer).role(), Role::Issuer);
+
+    assert_eq!(
+        env.events().all(),
+        vec![
+            &env,
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "issuer_registered"), issuer.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
+        ]
+    );
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &issuer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "register_buyer",
+            args: (issuer.clone(), metadata.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.register_buyer(&issuer, &metadata);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_register_buyer_then_issuer_panics() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, RegistryContract);
+    let client = RegistryContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    let metadata = map![&env];
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "initialize",
+            args: (admin.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.initialize(&admin);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &buyer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "register_buyer",
+            args: (buyer.clone(), metadata.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.register_buyer(&buyer, &metadata);
+
+    assert!(client.is_verified(&buyer));
+    assert_eq!(client.get_profile(&buyer).role(), Role::Buyer);
+
+    assert_eq!(
+        env.events().all(),
+        vec![
+            &env,
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "buyer_registered"), buyer.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
+        ]
+    );
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &buyer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "register_issuer",
+            args: (buyer.clone(), metadata.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.register_issuer(&buyer, &metadata);
+}
+
 #[test]
 #[should_panic(expected = "Error(Contract, #1)")]
 fn test_double_initialize_panics() {
