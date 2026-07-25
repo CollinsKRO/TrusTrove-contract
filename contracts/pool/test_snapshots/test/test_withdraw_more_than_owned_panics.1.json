@@ -1567,7 +1567,14 @@
           "v0": {
             "topics": [
               {
+<<<<<<< HEAD
                 "symbol": "pool_contract_set"
+=======
+                "symbol": "pool_contract_updated"
+              },
+              {
+                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVAX5"
+>>>>>>> 87db55d (feat(invoice): emit pool_contract_updated event on set_pool_contract)
               },
               {
                 "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVAX5"
