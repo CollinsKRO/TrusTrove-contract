@@ -97,6 +97,7 @@ impl InvoiceContract {
     /// Requires authorization from `issuer`.
     ///
     /// # Panics
+    /// * `InvoiceError::InvalidParticipants` if `issuer` and `buyer` are the same address.
     /// * `InvoiceError::IssuerNotVerified` if the issuer is not verified in the registry.
     /// * `InvoiceError::BuyerNotVerified` if the buyer is not verified in the registry.
     /// * `InvoiceError::InvalidFaceValue` if `face_value` is zero.
@@ -118,6 +119,10 @@ impl InvoiceContract {
         funding_asset: Address,
     ) -> BytesN<32> {
         issuer.require_auth();
+
+        if issuer == buyer {
+            panic_with_error!(&env, InvoiceError::InvalidParticipants);
+        }
 
         let registry_id: Address = env
             .storage()

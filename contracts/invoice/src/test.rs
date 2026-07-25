@@ -1290,3 +1290,11 @@ fn test_existing_valid_addresses_still_work() {
     assert_eq!(invoice.due_date, due_date);
     assert_eq!(invoice.status, InvoiceStatus::Created);
 }
+
+#[test]
+#[should_panic(expected = "Error(Contract, #16)")]
+fn test_create_fails_self_invoicing() {
+    let (env, client, issuer, _, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    client.create(&issuer, &issuer, &1_000_000_000, &due_date, &usdc);
+}
