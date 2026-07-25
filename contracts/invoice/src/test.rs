@@ -8,7 +8,7 @@ use soroban_sdk::{
     vec, Address, BytesN, Env, IntoVal, Symbol,
 };
 
-use crate::{InvoiceContract, InvoiceContractClient, InvoiceStatus};
+use crate::{DataKey, InvoiceContract, InvoiceContractClient, InvoiceStatus};
 
 #[contract]
 pub struct MockRegistry;
@@ -169,6 +169,52 @@ fn mock_pool_with_asset(env: &Env, asset: &Address) -> Address {
         env.storage().instance().set(&key, asset);
     });
     pool_id
+}
+
+// ── Issue #217: double-initialize panics ───────────────────────────────────────
+
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn test_double_initialize_panics() {
+    let env = Env::default();
+
+    let registry_id = env.register_contract(None, MockRegistry);
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+
+    // First initialize — succeeds
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "initialize",
+            args: (admin.clone(), registry_id.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.initialize(&admin, &registry_id);
+
+    // Verify admin and registry were stored correctly
+    env.as_contract(&contract_id, || {
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap();
+        assert_eq!(stored_admin, admin);
+        let stored_registry: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::RegistryContract)
+            .unwrap();
+        assert_eq!(stored_registry, registry_id);
+    });
+
+    // Second initialize — panics with AlreadyInitialized (Error(Contract, #1));
+    // admin/registry must remain unchanged from the first call
+    client.initialize(&admin, &registry_id);
 }
 
 #[test]
