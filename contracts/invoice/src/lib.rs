@@ -112,15 +112,11 @@ impl InvoiceContract {
         env.storage()
             .instance()
             .set(&DataKey::PoolContract, &pool_contract);
-<<<<<<< HEAD
-        events::pool_contract_set(&env, &pool_contract);
-=======
         if let Some(old) = old_pool {
             events::pool_contract_updated(&env, &old, &pool_contract);
         } else {
             events::pool_contract_updated(&env, &pool_contract, &pool_contract);
         }
->>>>>>> 87db55d (feat(invoice): emit pool_contract_updated event on set_pool_contract)
     }
 
     /// Creates a new invoice with the given issuer, buyer, and terms.
