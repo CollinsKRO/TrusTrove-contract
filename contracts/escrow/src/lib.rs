@@ -21,7 +21,6 @@ impl EscrowContract {
     /// * `env` - The Soroban environment.
     /// * `admin` - The admin address for this contract.
     /// * `pool_contract` - The pool contract address.
-    /// * `invoice_contract` - The invoice contract address.
     /// * `usdc_asset` - The USDC asset address.
     ///
     /// # Auth
@@ -35,15 +34,9 @@ impl EscrowContract {
     ///
     /// # Example
     /// ```ignore
-    /// client.initialize(&admin, &pool, &invoice, &usdc);
+    /// client.initialize(&admin, &pool, &usdc);
     /// ```
-    pub fn initialize(
-        env: Env,
-        admin: Address,
-        pool_contract: Address,
-        invoice_contract: Address,
-        usdc_asset: Address,
-    ) {
+    pub fn initialize(env: Env, admin: Address, pool_contract: Address, usdc_asset: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic_with_error!(&env, EscrowError::AlreadyInitialized);
         }
@@ -52,9 +45,6 @@ impl EscrowContract {
         env.storage()
             .instance()
             .set(&DataKey::PoolContract, &pool_contract);
-        env.storage()
-            .instance()
-            .set(&DataKey::InvoiceContract, &invoice_contract);
         env.storage()
             .instance()
             .set(&DataKey::UsdcAsset, &usdc_asset);
@@ -148,16 +138,6 @@ impl EscrowContract {
 
         if issuer == env.current_contract_address() || issuer == pool {
             panic_with_error!(&env, EscrowError::InvalidRecipient);
-        }
-
-        if let Some(invoice_contract) = env
-            .storage()
-            .instance()
-            .get::<_, Address>(&DataKey::InvoiceContract)
-        {
-            if issuer == invoice_contract {
-                panic_with_error!(&env, EscrowError::InvalidRecipient);
-            }
         }
 
         let key = DataKey::Locked(invoice_id.clone());
