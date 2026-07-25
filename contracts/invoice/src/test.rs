@@ -561,6 +561,52 @@ fn test_expire_listing_configurable_window() {
 }
 
 #[test]
+fn test_expire_listing_exact_boundary() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    // Fast forward by exact expiry window (7 days)
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60);
+
+    let result = client.expire_listing(&invoice_id);
+    assert!(result);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Expired);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #14)")]
+fn test_expire_listing_one_second_before_boundary_panics() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    // Fast forward to 1 second before expiry window
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60 - 1);
+
+    client.expire_listing(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #15)")]
+fn test_expire_listing_overflow_panics() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    env.ledger().set_timestamp(100);
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    // Set an expiry window that will overflow u64 when added to listed_at (100 + u64::MAX > u64::MAX)
+    client.set_expiry_window(&u64::MAX);
+
+    client.expire_listing(&invoice_id);
+}
+
+#[test]
 fn test_set_pool_contract_emits_event() {
     let (env, client, _, _, _, _) = setup();
     let pool = Address::generate(&env);

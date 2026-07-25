@@ -780,13 +780,21 @@ impl InvoiceContract {
             .get(&DataKey::ExpiryWindow)
             .unwrap_or(7 * 24 * 60 * 60);
         let current_time = env.ledger().timestamp();
-        if current_time <= listed_at + expiry_window {
+        let deadline = listed_at
+            .checked_add(expiry_window)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::MathOverflow));
+
+        if current_time < deadline {
             panic_with_error!(&env, InvoiceError::ListingNotExpired);
         }
 
         let prev_status = invoice.status;
         invoice.status = InvoiceStatus::Expired;
         env.storage().persistent().set(&inv_key, &invoice);
+        env.storage()
+            .persistent()
+            .extend_ttl(&inv_key, 100, 2_000_000);
+        Self::extend_instance_ttl(&env);
 
         move_status_index(&env, &invoice_id, prev_status, InvoiceStatus::Expired);
         events::invoice_expired(&env, &invoice_id);
