@@ -71,6 +71,7 @@ pub fn invoice_defaulted(env: &Env, invoice_id: &BytesN<32>) {
     );
 }
 
+<<<<<<< HEAD
 pub fn invoice_expired(env: &Env, invoice_id: &BytesN<32>) {
     env.events().publish(
         (Symbol::new(env, "invoice_expired"), invoice_id.clone()),
@@ -96,6 +97,14 @@ pub fn ownership_transferred(env: &Env, from: &Address, to: &Address) {
             Symbol::new(env, "ownership_transferred"),
             from.clone(),
             to.clone(),
+=======
+pub fn pool_contract_updated(env: &Env, old: &Address, new: &Address) {
+    env.events().publish(
+        (
+            Symbol::new(env, "pool_contract_updated"),
+            old.clone(),
+            new.clone(),
+>>>>>>> 87db55d (feat(invoice): emit pool_contract_updated event on set_pool_contract)
         ),
         (),
     );
