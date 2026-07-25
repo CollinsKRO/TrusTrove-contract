@@ -224,11 +224,25 @@ impl EscrowContract {
     }
 
     pub fn handle_default(env: Env, invoice_id: BytesN<32>, caller: Address) -> bool {
+        // Releases the escrowed funds to the pool when an invoice defaults.
+        //
+        // # Arguments
+        // * `env` - The Soroban environment.
+        // * `invoice_id` - The invoice that defaulted.
+        // * `caller` - The caller initiating the default (must be admin or pool).
+        //
+        // # Returns
+        // * `bool` - `true` when the default is handled.
+        //
+        // # Panics
+        // * `NotFound` if no escrow record exists for the invoice.
+        // * `NotAuthorized` if the caller is neither admin nor pool.
+        //
+        // # Example
+        // ```ignore
+        // client.handle_default(&invoice_id, &pool);
+        // ```
         let key = DataKey::Locked(invoice_id.clone());
-        if !env.storage().persistent().has(&key) {
-            return false;
-        }
-
         let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         let pool: Address = env
             .storage()
@@ -245,7 +259,11 @@ impl EscrowContract {
             panic_with_error!(&env, EscrowError::NotAuthorized);
         }
 
-        let record: EscrowRecord = env.storage().persistent().get(&key).unwrap();
+        let record: EscrowRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| panic_with_error!(&env, EscrowError::NotFound));
         let usdc_id: Address = env.storage().instance().get(&DataKey::UsdcAsset).unwrap();
         let usdc = token::Client::new(&env, &usdc_id);
         usdc.transfer(

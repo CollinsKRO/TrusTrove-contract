@@ -289,12 +289,12 @@ fn test_handle_default_admin_can_trigger() {
 }
 
 #[test]
-fn test_handle_default_no_record_returns_false() {
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_handle_default_no_record_panics_not_found() {
     let (env, client, _admin, pool, _usdc) = setup();
     let invoice_id = generate_invoice_id(&env);
 
-    let result = client.handle_default(&invoice_id, &pool);
-    assert!(!result);
+    client.handle_default(&invoice_id, &pool);
 }
 
 #[test]
