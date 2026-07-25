@@ -125,21 +125,8 @@ impl InvoiceContract {
             .get(&DataKey::RegistryContract)
             .unwrap();
 
-        let mut args = Vec::new(&env);
-        args.push_back(issuer.clone().into_val(&env));
-        let issuer_verified: bool =
-            env.invoke_contract(&registry_id, &Symbol::new(&env, "is_verified"), args);
-        if !issuer_verified {
-            panic_with_error!(&env, InvoiceError::IssuerNotVerified);
-        }
-
-        let mut args = Vec::new(&env);
-        args.push_back(buyer.clone().into_val(&env));
-        let buyer_verified: bool =
-            env.invoke_contract(&registry_id, &Symbol::new(&env, "is_verified"), args);
-        if !buyer_verified {
-            panic_with_error!(&env, InvoiceError::BuyerNotVerified);
-        }
+        require_verified(&env, &registry_id, &issuer, InvoiceError::IssuerNotVerified);
+        require_verified(&env, &registry_id, &buyer, InvoiceError::BuyerNotVerified);
 
         if face_value == 0 {
             panic_with_error!(&env, InvoiceError::InvalidFaceValue);
@@ -1140,6 +1127,18 @@ impl InvoiceContract {
 
     fn extend_instance_ttl(env: &Env) {
         env.storage().instance().extend_ttl(100, 2_000_000);
+    }
+}
+
+/// Checks that an address is verified in the registry, panicking with the
+/// provided error if not.
+fn require_verified(env: &Env, registry_id: &Address, addr: &Address, err: InvoiceError) {
+    let mut args = Vec::new(env);
+    args.push_back(addr.clone().into_val(env));
+    let verified: bool =
+        env.invoke_contract(registry_id, &Symbol::new(env, "is_verified"), args);
+    if !verified {
+        panic_with_error!(env, err);
     }
 }
 
