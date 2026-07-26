@@ -111,7 +111,11 @@ impl InvoiceContract {
     /// * `InvoiceError::BuyerNotVerified` if the buyer is not verified in the registry.
     /// * `InvoiceError::InvalidFaceValue` if `face_value` is zero.
     /// * `InvoiceError::InvalidAmount` if `face_value` exceeds [`MAX_FACE_VALUE`].
-    /// * `InvoiceError::InvalidDueDate` if `due_date` is not in the future.
+    /// * `InvoiceError::InvalidDueDate` if `due_date` is not strictly in the
+    ///   future. Requires `due_date > now`; the boundary comparator is `<=`,
+    ///   so `due_date == now` is rejected. Pinning tests:
+    ///   `test_create_fails_when_due_date_equals_now` and
+    ///   `test_create_succeeds_when_due_date_one_second_in_future`.
     /// * `InvoiceError::CounterOverflow` if the internal invoice counter overflows.
     ///
     /// # Returns
