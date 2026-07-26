@@ -46,7 +46,44 @@ impl MockPool {
         let key = Symbol::new(&env, "asset");
         env.storage().instance().get(&key).unwrap()
     }
+
+    pub fn receive_repayment_with_refund(
+        _env: Env,
+        _invoice_id: BytesN<32>,
+        _face_value: u128,
+        _refund_to_buyer: u128,
+        _buyer: Address,
+    ) -> bool {
+        true
+    }
 }
+
+#[contract]
+pub struct MockToken;
+
+#[contractimpl]
+impl MockToken {
+    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+        let from_key = BalanceKey(from.clone());
+        let to_key = BalanceKey(to.clone());
+        let from_bal: i128 = env.storage().persistent().get(&from_key).unwrap_or(0);
+        let to_bal: i128 = env.storage().persistent().get(&to_key).unwrap_or(0);
+        env.storage()
+            .persistent()
+            .set(&from_key, &(from_bal - amount));
+        env.storage().persistent().set(&to_key, &(to_bal + amount));
+    }
+
+    pub fn balance(env: Env, addr: Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&BalanceKey(addr))
+            .unwrap_or(0)
+    }
+}
+
+#[contracttype]
+pub struct BalanceKey(Address);
 
 type Setup = (
     Env,
@@ -75,7 +112,13 @@ fn setup() -> Setup {
     let admin = Address::generate(&env);
     client.initialize(&admin, &registry_id);
 
-    let usdc_asset = Address::generate(&env);
+    let usdc_asset = env.register_contract(None, MockToken);
+    let buyer_bal_key = BalanceKey(buyer.clone());
+    env.as_contract(&usdc_asset, || {
+        env.storage()
+            .persistent()
+            .set(&buyer_bal_key, &1_000_000_000_000_000i128);
+    });
 
     (env, client, issuer, buyer, registry_client, usdc_asset)
 }
