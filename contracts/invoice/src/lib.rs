@@ -13,6 +13,15 @@ mod types;
 pub use errors::*;
 pub use types::*;
 
+/// Upper bound on `Invoice::face_value`, in USDC stroops.
+///
+/// Chosen so that `face_value * 10_000` (the scaling factor used by
+/// downstream discount/utilization math in the pool contract, e.g.
+/// `face_value * (10_000 - discount_bps) / 10_000`) can never overflow
+/// `u128`, preventing arithmetic overflow in the pool when it consumes
+/// this value.
+pub const MAX_FACE_VALUE: u128 = u128::MAX / 10_000;
+
 #[contract]
 pub struct InvoiceContract;
 
@@ -97,10 +106,13 @@ impl InvoiceContract {
     /// Requires authorization from `issuer`.
     ///
     /// # Panics
+    /// * `InvoiceError::NotFound` if the contract has not been initialized.
     /// * `InvoiceError::IssuerNotVerified` if the issuer is not verified in the registry.
     /// * `InvoiceError::BuyerNotVerified` if the buyer is not verified in the registry.
     /// * `InvoiceError::InvalidFaceValue` if `face_value` is zero.
+    /// * `InvoiceError::InvalidAmount` if `face_value` exceeds [`MAX_FACE_VALUE`].
     /// * `InvoiceError::InvalidDueDate` if `due_date` is not in the future.
+    /// * `InvoiceError::CounterOverflow` if the internal invoice counter overflows.
     ///
     /// # Returns
     /// * `BytesN<32>` - The generated invoice ID.
@@ -123,7 +135,7 @@ impl InvoiceContract {
             .storage()
             .instance()
             .get(&DataKey::RegistryContract)
-            .unwrap();
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
 
         require_verified(&env, &registry_id, &issuer, InvoiceError::IssuerNotVerified);
         require_verified(&env, &registry_id, &buyer, InvoiceError::BuyerNotVerified);
@@ -131,12 +143,21 @@ impl InvoiceContract {
         if face_value == 0 {
             panic_with_error!(&env, InvoiceError::InvalidFaceValue);
         }
+        if face_value > MAX_FACE_VALUE {
+            panic_with_error!(&env, InvoiceError::InvalidAmount);
+        }
         if due_date <= env.ledger().timestamp() {
             panic_with_error!(&env, InvoiceError::InvalidDueDate);
         }
 
-        let counter: u64 = env.storage().instance().get(&DataKey::Counter).unwrap();
-        let next_counter = counter + 1;
+        let counter: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::Counter)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
+        let next_counter = counter
+            .checked_add(1)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::CounterOverflow));
         env.storage()
             .instance()
             .set(&DataKey::Counter, &next_counter);
@@ -623,6 +644,10 @@ impl InvoiceContract {
 
     /// Triggers default on a past-due invoice.
     ///
+    /// Default is permitted once `now >= due_date` — the due date has been
+    /// reached or passed. This is consistent with the `create` check that
+    /// rejects `due_date <= now` (due dates must be in the future).
+    ///
     /// # Arguments
     /// * `env` - The Soroban environment.
     /// * `invoice_id` - The invoice to default.
@@ -633,7 +658,8 @@ impl InvoiceContract {
     /// # Panics
     /// * `InvoiceError::NotFound` if the admin, invoice, or funding pool cannot be found.
     /// * `InvoiceError::InvalidStatusTransition` if invoice is not `Funded`, `Active`, or `Confirmed`.
-    /// * `InvoiceError::DueDateNotPassed` if the invoice due date has not yet passed.
+    /// * `InvoiceError::DueDateNotPassed` if `now < due_date` — the due date
+    ///   has not yet been reached.
     ///
     /// # Returns
     /// * `bool` - `true` when default processing succeeds.
@@ -663,7 +689,7 @@ impl InvoiceContract {
         if !valid_transition {
             panic_with_error!(&env, InvoiceError::InvalidStatusTransition);
         }
-        if env.ledger().timestamp() <= invoice.due_date {
+        if env.ledger().timestamp() < invoice.due_date {
             panic_with_error!(&env, InvoiceError::DueDateNotPassed);
         }
 
@@ -767,13 +793,21 @@ impl InvoiceContract {
             .get(&DataKey::ExpiryWindow)
             .unwrap_or(7 * 24 * 60 * 60);
         let current_time = env.ledger().timestamp();
-        if current_time <= listed_at + expiry_window {
+        let deadline = listed_at
+            .checked_add(expiry_window)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::MathOverflow));
+
+        if current_time < deadline {
             panic_with_error!(&env, InvoiceError::ListingNotExpired);
         }
 
         let prev_status = invoice.status;
         invoice.status = InvoiceStatus::Expired;
         env.storage().persistent().set(&inv_key, &invoice);
+        env.storage()
+            .persistent()
+            .extend_ttl(&inv_key, 100, 2_000_000);
+        Self::extend_instance_ttl(&env);
 
         move_status_index(&env, &invoice_id, prev_status, InvoiceStatus::Expired);
         events::invoice_expired(&env, &invoice_id);
@@ -943,18 +977,19 @@ impl InvoiceContract {
             .persistent()
             .get(&DataKey::StatusIndexCount(status as u32))
             .unwrap_or(0);
-        let mut result: Vec<Invoice> = Vec::new(&env);
+        let mut ids: Vec<BytesN<32>> = Vec::new(&env);
         for i in 0..count {
             let id: BytesN<32> = env
                 .storage()
                 .persistent()
                 .get(&DataKey::StatusIndexEntry(status as u32, i))
                 .unwrap();
-            let invoice: Invoice = env
-                .storage()
-                .persistent()
-                .get(&DataKey::Invoice(id))
-                .unwrap();
+            ids.push_back(id);
+        }
+        let invoices = hydrate_ids(&env, ids);
+        let mut result: Vec<Invoice> = Vec::new(&env);
+        for i in 0..invoices.len() {
+            let invoice = invoices.get(i).unwrap();
             if invoice.status == status {
                 result.push_back(invoice);
             }
@@ -987,21 +1022,16 @@ impl InvoiceContract {
             .persistent()
             .get(&DataKey::IssuerIndexCount(address.clone()))
             .unwrap_or(0);
-        let mut result: Vec<Invoice> = Vec::new(&env);
+        let mut ids: Vec<BytesN<32>> = Vec::new(&env);
         for i in 0..count {
             let id: BytesN<32> = env
                 .storage()
                 .persistent()
                 .get(&DataKey::IssuerIndexEntry(address.clone(), i))
                 .unwrap();
-            let invoice: Invoice = env
-                .storage()
-                .persistent()
-                .get(&DataKey::Invoice(id))
-                .unwrap();
-            result.push_back(invoice);
+            ids.push_back(id);
         }
-        result
+        hydrate_ids(&env, ids)
     }
 
     /// Lists invoices associated with a given buyer.
@@ -1029,21 +1059,16 @@ impl InvoiceContract {
             .persistent()
             .get(&DataKey::BuyerIndexCount(address.clone()))
             .unwrap_or(0);
-        let mut result: Vec<Invoice> = Vec::new(&env);
+        let mut ids: Vec<BytesN<32>> = Vec::new(&env);
         for i in 0..count {
             let id: BytesN<32> = env
                 .storage()
                 .persistent()
                 .get(&DataKey::BuyerIndexEntry(address.clone(), i))
                 .unwrap();
-            let invoice: Invoice = env
-                .storage()
-                .persistent()
-                .get(&DataKey::Invoice(id))
-                .unwrap();
-            result.push_back(invoice);
+            ids.push_back(id);
         }
-        result
+        hydrate_ids(&env, ids)
     }
 
     /// Returns a map of invoice counts keyed by status name.
@@ -1211,4 +1236,18 @@ fn read_status_count(env: &Env, status: InvoiceStatus) -> u64 {
         .persistent()
         .get(&DataKey::StatusCount(status as u32))
         .unwrap_or(0u64)
+}
+
+fn hydrate_ids(env: &Env, ids: Vec<BytesN<32>>) -> Vec<Invoice> {
+    let mut result: Vec<Invoice> = Vec::new(env);
+    for i in 0..ids.len() {
+        let id = ids.get(i).unwrap();
+        let invoice: Invoice = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Invoice(id))
+            .unwrap();
+        result.push_back(invoice);
+    }
+    result
 }
