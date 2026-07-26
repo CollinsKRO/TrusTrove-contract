@@ -481,6 +481,9 @@ impl PoolContract {
     /// # Panics
     /// * `InvoiceNotFound` if the invoice is not funded.
     /// * `InvalidAmount` if the repayment amount is less than the funded amount.
+    /// * `ActiveCountUnderflow` if the active-invoice counter would underflow
+    ///   (e.g. a mismatched repayment for an invoice that was never funded
+    ///   through this pool).
     ///
     /// # Returns
     /// * `bool` - `true` when repayment is processed.
@@ -536,9 +539,12 @@ impl PoolContract {
             .instance()
             .get(&DataKey::ActiveInvoiceCount)
             .unwrap();
+        let new_active_count = active_count
+            .checked_sub(1)
+            .unwrap_or_else(|| panic_with_error!(&env, PoolError::ActiveCountUnderflow));
         env.storage()
             .instance()
-            .set(&DataKey::ActiveInvoiceCount, &(active_count - 1));
+            .set(&DataKey::ActiveInvoiceCount, &new_active_count);
 
         env.storage().persistent().remove(&funded_key);
 
@@ -547,6 +553,36 @@ impl PoolContract {
         true
     }
 
+    /// Receives invoice repayment with a partial refund to the buyer and updates
+    /// pool liquidity metrics.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `invoice_id` - The invoice being repaid.
+    /// * `amount` - The amount repaid.
+    /// * `refund` - The amount to refund to the buyer.
+    /// * `buyer` - The buyer receiving the refund.
+    ///
+    /// # Auth
+    /// Requires authorization from the configured `invoice_contract`
+    /// (via `invoice_contract.require_auth()`); only the invoice contract may
+    /// invoke this entry point.
+    ///
+    /// # Panics
+    /// * `InvoiceNotFound` if the invoice is not funded.
+    /// * `InvalidAmount` if the repayment amount is less than the funded amount,
+    ///   or if the refund exceeds the maximum allowed.
+    /// * `ActiveCountUnderflow` if the active-invoice counter would underflow
+    ///   (e.g. a mismatched repayment for an invoice that was never funded
+    ///   through this pool).
+    ///
+    /// # Returns
+    /// * `bool` - `true` when repayment is processed.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.receive_repayment_with_refund(&invoice_id, 1_050, 50, &buyer);
+    /// ```
     pub fn receive_repayment_with_refund(
         env: Env,
         invoice_id: BytesN<32>,
@@ -605,9 +641,12 @@ impl PoolContract {
             .instance()
             .get(&DataKey::ActiveInvoiceCount)
             .unwrap();
+        let new_active_count = active_count
+            .checked_sub(1)
+            .unwrap_or_else(|| panic_with_error!(&env, PoolError::ActiveCountUnderflow));
         env.storage()
             .instance()
-            .set(&DataKey::ActiveInvoiceCount, &(active_count - 1));
+            .set(&DataKey::ActiveInvoiceCount, &new_active_count);
 
         env.storage().persistent().remove(&funded_key);
 
@@ -635,9 +674,8 @@ impl PoolContract {
     /// invoke this entry point.
     ///
     /// # Panics
-    /// This function does not intentionally panic; it returns `false` when the
-    /// invoice is not funded. Arithmetic on internal counters is expected not
-    /// to underflow given the funded-invoice invariant.
+    /// * `ActiveCountUnderflow` if the active-invoice counter would underflow
+    ///   (e.g. double-default of the same invoice).
     ///
     /// # Returns
     /// * `bool` - `true` when default handling completes, `false` if invoice is not funded.
@@ -691,9 +729,12 @@ impl PoolContract {
             .instance()
             .get(&DataKey::ActiveInvoiceCount)
             .unwrap();
+        let new_active_count = active_count
+            .checked_sub(1)
+            .unwrap_or_else(|| panic_with_error!(&env, PoolError::ActiveCountUnderflow));
         env.storage()
             .instance()
-            .set(&DataKey::ActiveInvoiceCount, &(active_count - 1));
+            .set(&DataKey::ActiveInvoiceCount, &new_active_count);
 
         env.storage().persistent().remove(&funded_key);
 

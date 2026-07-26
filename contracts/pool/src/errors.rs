@@ -16,4 +16,5 @@ pub enum PoolError {
     MinimumDeposit = 14,
     InvalidConfiguration = 15,
     AlreadyFunded = 16,
+    ActiveCountUnderflow = 17,
 }

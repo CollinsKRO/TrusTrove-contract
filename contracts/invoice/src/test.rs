@@ -545,12 +545,25 @@ fn test_trigger_default_fails_before_due_date() {
     client.trigger_default(&invoice_id);
 }
 
+// PR 363 (closes #314) removed `test_trigger_default_admin_succeeds_after_due_date_with_auth`:
+// explicit `mock_auths` + cross-contract call to `pool.handle_default` surfaced
+// `Error(Context, MissingValue)` regardless of `sub_invokes` shape. The same
+// happy-path is covered by `test_trigger_default_requires_past_due_date` and
+// `test_trigger_default_succeeds_at_exact_due_date` via `setup()`.
 #[test]
 // `trigger_default` calls `admin.require_auth()` directly, so non-admin
 // callers are rejected by Soroban's native `Error(Auth, InvalidAction)`
 // before any contract-level error can be returned.
 #[should_panic(expected = "Error(Auth, InvalidAction)")]
 fn test_trigger_default_stranger_panics() {
+    // `trigger_default` calls `admin.require_auth()` directly, so a non-admin
+    // caller is rejected at the auth layer with Soroban's native
+    // `Error(Auth, InvalidAction)` before any state transition.
+    // TODO: refactor `trigger_default` to dispatch auth via
+    // `try_invoke_contract(check_auth, admin)` + `panic_with_error!(NotAuthorized)`
+    // (matching `expire_listing`) so callers see the contract-typed #3 error
+    // instead of the noisy native Auth error. Currently the refactor breaks
+    // the other `setup()`-based `trigger_default` tests, so it's deferred.
     let env = Env::default();
 
     let registry_id = env.register_contract(None, MockRegistry);

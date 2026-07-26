@@ -765,7 +765,12 @@ impl InvoiceContract {
             .unwrap_or(7 * 24 * 60 * 60)
     }
 
-    pub fn check_auth(_env: Env, address: Address) {
+    /// Helper to check authorization for a given address.
+    /// This is invoked dynamically via `try_invoke_contract` in `expire_listing`.
+    /// Rust's dead-code analysis can't see the dynamic dispatch via `Symbol`, so
+    /// the `#[allow(dead_code)]` keeps it in the WASM dispatch table.
+    #[allow(dead_code)]
+    fn check_auth(_env: Env, address: Address) {
         address.require_auth();
     }
 
