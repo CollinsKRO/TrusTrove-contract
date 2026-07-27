@@ -590,6 +590,166 @@ fn test_trigger_default_fails_before_due_date() {
     client.trigger_default(&invoice_id);
 }
 
+#[test]
+fn test_trigger_default_fails_before_due_date_with_explicit_auth() {
+    let env = Env::default();
+
+    let registry_id = env.register_contract(None, MockRegistry);
+    let registry_client = MockRegistryClient::new(&env, &registry_id);
+
+    let issuer = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    registry_client.register(&issuer);
+    registry_client.register(&buyer);
+
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "initialize",
+            args: (admin.clone(), registry_id.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.initialize(&admin, &registry_id);
+
+    let usdc = Address::generate(&env);
+    let due_date = env.ledger().timestamp() + 86400;
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &issuer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "create",
+            args: (
+                issuer.clone(),
+                buyer.clone(),
+                1_000_000_000u128,
+                due_date,
+                usdc.clone(),
+            )
+                .into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &issuer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "list_for_financing",
+            args: (invoice_id.clone(), 200u32).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool_id = mock_pool_with_asset(&env, &usdc);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "set_pool_contract",
+            args: (pool_id.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.set_pool_contract(&pool_id);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &pool_id,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "mark_funded",
+            args: (
+                invoice_id.clone(),
+                pool_id.clone(),
+                usdc.clone(),
+                980_000_000u128,
+            )
+                .into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.mark_funded(&invoice_id, &pool_id, &usdc, &980_000_000);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &issuer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "mark_shipped",
+            args: (invoice_id.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.mark_shipped(&invoice_id);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &issuer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "confirm_delivery",
+            args: (invoice_id.clone(), issuer.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.confirm_delivery(&invoice_id, &issuer);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &buyer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "confirm_delivery",
+            args: (invoice_id.clone(), buyer.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.confirm_delivery(&invoice_id, &buyer);
+
+    // Confirm the invoice reached the expected pre-default state
+    let invoice_before = client.get(&invoice_id);
+    assert_eq!(invoice_before.status, InvoiceStatus::Confirmed);
+    let events_before = env.events().all().len();
+
+    // Set ledger to 1 second before the due date
+    env.ledger().set_timestamp(due_date - 1);
+
+    // Authorize the admin for trigger_default — auth will pass, time check will fail
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "trigger_default",
+            args: (invoice_id.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.trigger_default(&invoice_id);
+    }));
+    assert!(result.is_err(), "trigger_default should have panicked with DueDateNotPassed");
+
+    // State unchanged after failed call
+    let invoice_after = client.get(&invoice_id);
+    assert_eq!(invoice_after.status, InvoiceStatus::Confirmed);
+    assert_eq!(invoice_after.face_value, invoice_before.face_value);
+    assert_eq!(invoice_after.due_date, invoice_before.due_date);
+    assert_eq!(invoice_after.funded_amount, invoice_before.funded_amount);
+    assert_eq!(invoice_after.issuer_confirmed, invoice_before.issuer_confirmed);
+    assert_eq!(invoice_after.buyer_confirmed, invoice_before.buyer_confirmed);
+
+    // No new events emitted
+    assert_eq!(env.events().all().len(), events_before);
+}
+
 // PR 363 (closes #314) removed `test_trigger_default_admin_succeeds_after_due_date_with_auth`:
 // explicit `mock_auths` + cross-contract call to `pool.handle_default` surfaced
 // `Error(Context, MissingValue)` regardless of `sub_invokes` shape. The same
