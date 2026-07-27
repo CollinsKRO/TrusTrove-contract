@@ -862,6 +862,100 @@ fn test_receive_repayment_panics_when_amount_below_funded() {
     te.pool.receive_repayment(&invoice_id, &1_000_000_000);
 }
 
+// Mismatched repayment (active_count already zero) must NOT silently underflow the
+// counter to u32::MAX — the contract panics with #17 (ActiveCountUnderflow) instead.
+// Otherwise every subsequent `get_stats()` / utilization read is corrupted.
+#[test]
+#[should_panic(expected = "Error(Contract, #17)")]
+fn test_receive_repayment_active_count_underflow_panics() {
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+
+    // Inject a phantom funded-invoice record but force active_count to 0 so the
+    // `active_count.checked_sub(1)` branch is the one to trigger. The other
+    // counters are kept consistent so the panic lands on ActiveCountUnderflow,
+    // not on the u128 underflow in `total_funded - funded_amount`.
+    let phantom_id = BytesN::from_array(&te.env, &[0xab; 32]);
+    let funded_amount: u128 = 9_800_000_000;
+    te.env.as_contract(&te.pool_id, || {
+        te.env
+            .storage()
+            .persistent()
+            .set(&DataKey::FundedInvoice(phantom_id.clone()), &funded_amount);
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalFunded, &funded_amount);
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::ActiveInvoiceCount, &0u32);
+    });
+
+    te.pool.receive_repayment(&phantom_id, &funded_amount);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #17)")]
+fn test_receive_repayment_with_refund_active_count_underflow_panics() {
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+
+    let phantom_id = BytesN::from_array(&te.env, &[0xcd; 32]);
+    let funded_amount: u128 = 9_800_000_000;
+    te.env.as_contract(&te.pool_id, || {
+        te.env
+            .storage()
+            .persistent()
+            .set(&DataKey::FundedInvoice(phantom_id.clone()), &funded_amount);
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalFunded, &funded_amount);
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalDeposits, &funded_amount);
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::ActiveInvoiceCount, &0u32);
+    });
+
+    te.pool
+        .receive_repayment_with_refund(&phantom_id, &funded_amount, &0, &te.buyer);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #17)")]
+fn test_handle_default_active_count_underflow_panics() {
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+
+    let phantom_id = BytesN::from_array(&te.env, &[0xef; 32]);
+    let funded_amount: u128 = 9_800_000_000;
+    te.env.as_contract(&te.pool_id, || {
+        te.env
+            .storage()
+            .persistent()
+            .set(&DataKey::FundedInvoice(phantom_id.clone()), &funded_amount);
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalFunded, &funded_amount);
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalDeposits, &funded_amount);
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::ActiveInvoiceCount, &0u32);
+    });
+
+    te.pool.handle_default(&phantom_id);
+}
+
 // ============== DEFAULT TESTS ==============
 
 #[test]
@@ -876,6 +970,9 @@ fn test_handle_default() {
 
     let before = te.pool.get_stats();
     let position_before = te.pool.get_lp_position(&te.lp);
+    te.env
+        .ledger()
+        .set_timestamp(te.env.ledger().timestamp() + 60);
     let result = te.pool.handle_default(&invoice_id);
     assert!(result);
 
@@ -910,6 +1007,9 @@ fn test_handle_default_rejects_double_default() {
     te.pool.deposit(&te.lp, &100_000_000_000);
     let invoice_id = create_and_list(&te, &te.usdc_id);
     te.pool.fund_invoice(&invoice_id);
+    te.env
+        .ledger()
+        .set_timestamp(te.env.ledger().timestamp() + 60);
 
     assert!(te.pool.handle_default(&invoice_id));
     assert!(!te.pool.handle_default(&invoice_id));
@@ -922,6 +1022,9 @@ fn test_handle_default_requires_invoice_contract_authorization() {
     te.pool.deposit(&te.lp, &100_000_000_000);
     let invoice_id = create_and_list(&te, &te.usdc_id);
     te.pool.fund_invoice(&invoice_id);
+    te.env
+        .ledger()
+        .set_timestamp(te.env.ledger().timestamp() + 60);
 
     te.env.set_auths(&[]);
     te.pool.handle_default(&invoice_id);
@@ -945,6 +1048,9 @@ fn test_deposit_when_deposits_zero_but_shares_exist() {
 
     let invoice_id = create_and_list(&te, &te.usdc_id);
     te.pool.fund_invoice(&invoice_id);
+    te.env
+        .ledger()
+        .set_timestamp(te.env.ledger().timestamp() + 60);
 
     // Trigger default, wiping out all pool deposits
     te.pool.handle_default(&invoice_id);
@@ -972,6 +1078,9 @@ fn test_deposit_after_default_share_price_recovery() {
     // Fund invoice (9.8B funded)
     let invoice_id = create_and_list(&te, &te.usdc_id);
     let _ = te.pool.fund_invoice(&invoice_id);
+    te.env
+        .ledger()
+        .set_timestamp(te.env.ledger().timestamp() + 60);
 
     // Default wipes out 9.8B, leaving LP1 with 0.2B / 10B shares = 0.02 USDC per share
     let _ = te.pool.handle_default(&invoice_id);

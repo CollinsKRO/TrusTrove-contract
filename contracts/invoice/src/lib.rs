@@ -13,6 +13,11 @@ mod types;
 pub use errors::*;
 pub use types::*;
 
+mod storage {
+    pub const TTL_THRESHOLD: u32 = 100;
+    pub const TTL_EXTEND_TO: u32 = 2_000_000;
+}
+
 /// Upper bound on `Invoice::face_value`, in USDC stroops.
 ///
 /// Chosen so that `face_value * 10_000` (the scaling factor used by
@@ -27,6 +32,15 @@ pub struct InvoiceContract;
 
 #[contractimpl]
 impl InvoiceContract {
+    fn save_invoice(env: &Env, inv_key: DataKey, invoice: &Invoice) {
+        env.storage().persistent().set(&inv_key, invoice);
+        env.storage().persistent().extend_ttl(
+            &inv_key,
+            storage::TTL_THRESHOLD,
+            storage::TTL_EXTEND_TO,
+        );
+    }
+
     /// Initializes the invoice contract with admin and registry references.
     ///
     /// # Arguments
@@ -111,7 +125,11 @@ impl InvoiceContract {
     /// * `InvoiceError::BuyerNotVerified` if the buyer is not verified in the registry.
     /// * `InvoiceError::InvalidFaceValue` if `face_value` is zero.
     /// * `InvoiceError::InvalidAmount` if `face_value` exceeds [`MAX_FACE_VALUE`].
-    /// * `InvoiceError::InvalidDueDate` if `due_date` is not in the future.
+    /// * `InvoiceError::InvalidDueDate` if `due_date` is not strictly in the
+    ///   future. Requires `due_date > now`; the boundary comparator is `<=`,
+    ///   so `due_date == now` is rejected. Pinning tests:
+    ///   `test_create_fails_when_due_date_equals_now` and
+    ///   `test_create_succeeds_when_due_date_one_second_in_future`.
     /// * `InvoiceError::CounterOverflow` if the internal invoice counter overflows.
     ///
     /// # Returns
@@ -212,10 +230,7 @@ impl InvoiceContract {
         };
 
         let inv_key = DataKey::Invoice(invoice_id.clone());
-        env.storage().persistent().set(&inv_key, &invoice);
-        env.storage()
-            .persistent()
-            .extend_ttl(&inv_key, 100, 2_000_000);
+        Self::save_invoice(&env, inv_key, &invoice);
 
         self::extend_issuer_index(&env, &issuer, &invoice_id);
         self::extend_buyer_index(&env, &buyer, &invoice_id);
@@ -273,10 +288,7 @@ impl InvoiceContract {
         invoice.status = InvoiceStatus::Listed;
         invoice.discount_bps = discount_bps;
         invoice.listed_at = Some(env.ledger().timestamp());
-        env.storage().persistent().set(&inv_key, &invoice);
-        env.storage()
-            .persistent()
-            .extend_ttl(&inv_key, 100, 2_000_000);
+        Self::save_invoice(&env, inv_key, &invoice);
         Self::extend_instance_ttl(&env);
 
         move_status_index(
@@ -339,10 +351,7 @@ impl InvoiceContract {
         invoice.funded_amount = funded_amount;
         invoice.funded_at = Some(env.ledger().timestamp());
         invoice.funding_pool = Some(pool_address);
-        env.storage().persistent().set(&inv_key, &invoice);
-        env.storage()
-            .persistent()
-            .extend_ttl(&inv_key, 100, 2_000_000);
+        Self::save_invoice(&env, inv_key, &invoice);
         Self::extend_instance_ttl(&env);
 
         move_status_index(
@@ -388,10 +397,7 @@ impl InvoiceContract {
         }
         invoice.status = InvoiceStatus::Active;
         invoice.shipped_at = Some(env.ledger().timestamp());
-        env.storage().persistent().set(&inv_key, &invoice);
-        env.storage()
-            .persistent()
-            .extend_ttl(&inv_key, 100, 2_000_000);
+        Self::save_invoice(&env, inv_key, &invoice);
         Self::extend_instance_ttl(&env);
 
         move_status_index(
@@ -467,10 +473,7 @@ impl InvoiceContract {
             events::both_confirmed(&env, &invoice_id);
         }
 
-        env.storage().persistent().set(&inv_key, &invoice);
-        env.storage()
-            .persistent()
-            .extend_ttl(&inv_key, 100, 2_000_000);
+        Self::save_invoice(&env, inv_key, &invoice);
         Self::extend_instance_ttl(&env);
         events::delivery_confirmed(&env, &invoice_id, &confirmer);
         true
@@ -550,10 +553,7 @@ impl InvoiceContract {
         let mut updated = invoice;
         updated.status = InvoiceStatus::Repaid;
         updated.repaid_at = Some(env.ledger().timestamp());
-        env.storage().persistent().set(&inv_key, &updated);
-        env.storage()
-            .persistent()
-            .extend_ttl(&inv_key, 100, 2_000_000);
+        Self::save_invoice(&env, inv_key, &updated);
         Self::extend_instance_ttl(&env);
 
         move_status_index(
@@ -626,10 +626,7 @@ impl InvoiceContract {
         let mut updated = invoice;
         updated.status = InvoiceStatus::Repaid;
         updated.repaid_at = Some(now);
-        env.storage().persistent().set(&inv_key, &updated);
-        env.storage()
-            .persistent()
-            .extend_ttl(&inv_key, 100, 2_000_000);
+        Self::save_invoice(&env, inv_key, &updated);
         Self::extend_instance_ttl(&env);
 
         self::move_status_index(
@@ -695,10 +692,7 @@ impl InvoiceContract {
 
         let prev_status = invoice.status;
         invoice.status = InvoiceStatus::Defaulted;
-        env.storage().persistent().set(&inv_key, &invoice);
-        env.storage()
-            .persistent()
-            .extend_ttl(&inv_key, 100, 2_000_000);
+        Self::save_invoice(&env, inv_key, &invoice);
         Self::extend_instance_ttl(&env);
 
         move_status_index(&env, &invoice_id, prev_status, InvoiceStatus::Defaulted);
@@ -752,7 +746,12 @@ impl InvoiceContract {
             .unwrap_or(7 * 24 * 60 * 60)
     }
 
-    pub fn check_auth(_env: Env, address: Address) {
+    /// Helper to check authorization for a given address.
+    /// This is invoked dynamically via `try_invoke_contract` in `expire_listing`.
+    /// Rust's dead-code analysis can't see the dynamic dispatch via `Symbol`, so
+    /// the `#[allow(dead_code)]` keeps it in the WASM dispatch table.
+    #[allow(dead_code)]
+    fn check_auth(_env: Env, address: Address) {
         address.require_auth();
     }
 
@@ -803,10 +802,7 @@ impl InvoiceContract {
 
         let prev_status = invoice.status;
         invoice.status = InvoiceStatus::Expired;
-        env.storage().persistent().set(&inv_key, &invoice);
-        env.storage()
-            .persistent()
-            .extend_ttl(&inv_key, 100, 2_000_000);
+        Self::save_invoice(&env, inv_key, &invoice);
         Self::extend_instance_ttl(&env);
 
         move_status_index(&env, &invoice_id, prev_status, InvoiceStatus::Expired);
