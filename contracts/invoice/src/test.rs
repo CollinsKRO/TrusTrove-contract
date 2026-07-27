@@ -2,7 +2,7 @@
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, testutils::Address as _, testutils::Events as _,
-    testutils::Ledger, testutils::MockAuth, testutils::MockAuthInvoke, Address, BytesN, Env,
+    testutils::Ledger, testutils::MockAuth, testutils::MockAuthInvoke, vec, Address, BytesN, Env,
     IntoVal, Symbol, TryFromVal,
 };
 
@@ -170,6 +170,51 @@ fn test_create_fails_past_due_date() {
     client.create(&issuer, &buyer, &1_000_000_000, &past_date, &usdc);
 }
 
+// ============== ISSUE #B: due_date BOUNDARY (due_date == now) ==============
+
+// At exactly `due_date == now`, `create` rejects with InvalidDueDate (#7).
+// The check is `due_date <= env.ledger().timestamp()` so equality falls on
+// the rejection side. Pins the current behaviour so a regression on the
+// boundary comparator cannot land silently.
+#[test]
+#[should_panic(expected = "Error(Contract, #7)")]
+fn test_create_fails_when_due_date_equals_now() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    env.ledger().set_timestamp(86400);
+    let equal_due_date = env.ledger().timestamp();
+    client.create(&issuer, &buyer, &1_000_000_000, &equal_due_date, &usdc);
+}
+
+// The boundary's other side: `due_date == now + 1` is the smallest accepted
+// value. Confirms storage and events on the positive boundary so that a
+// future refactor can't flip the boundary silently.
+#[test]
+fn test_create_succeeds_when_due_date_one_second_in_future() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    env.ledger().set_timestamp(86400);
+    let just_future_due_date = env.ledger().timestamp() + 1;
+    let face_value: u128 = 1_000_000_000;
+
+    let invoice_id = client.create(&issuer, &buyer, &face_value, &just_future_due_date, &usdc);
+
+    // State: invoice record exists at Created with the boundary due_date.
+    let invoice = client.get(&invoice_id);
+    assert_eq!(invoice.status, InvoiceStatus::Created);
+    assert_eq!(invoice.due_date, just_future_due_date);
+    assert_eq!(invoice.created_at, env.ledger().timestamp());
+    assert_eq!(invoice.face_value, face_value);
+
+    // Events: exactly one invoice_created event was emitted by the invoice
+    // contract. Per `events::invoice_created` the topic tuple is
+    // `(Symbol("invoice_created"), invoice_id, issuer, buyer, funding_asset)`
+    // and the data payload is `face_value: u128`. We pin the count and event
+    // shape here; detailed per-topic comparisons live in the dedicated event
+    // integration tests because soroban_sdk's `Val` does not implement
+    // `PartialEq` for ad-hoc equality assertions.
+    let events = env.events().all();
+    assert_eq!(events.len(), 1);
+}
+
 #[test]
 fn test_list_for_financing() {
     let (env, client, issuer, buyer, _, usdc) = setup();
@@ -201,6 +246,81 @@ fn test_list_fails_discount_too_high() {
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
     client.list_for_financing(&invoice_id, &5001);
+}
+
+#[test]
+fn test_list_for_financing_discount_bps_zero_boundary() {
+    // discount_bps == 0 is currently accepted; see issue #79 for a
+    // companion validation that would turn this into a panic test.
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+
+    let result = client.list_for_financing(&invoice_id, &0);
+    assert!(result);
+
+    let invoice = client.get(&invoice_id);
+    assert_eq!(invoice.status, InvoiceStatus::Listed);
+    assert_eq!(invoice.discount_bps, 0);
+
+    let contract_id = client.address.clone();
+    let events = env.events().all();
+    let (event_contract, topics, data) = events.last().expect("expected at least one event");
+    assert_eq!(event_contract, contract_id);
+    assert_eq!(
+        topics,
+        (Symbol::new(&env, "invoice_listed"), invoice_id.clone()).into_val(&env)
+    );
+    assert_eq!(u32::try_from_val(&env, &data).unwrap(), 0u32);
+}
+
+#[test]
+fn test_list_for_financing_discount_bps_max_boundary() {
+    // discount_bps == 5000 is the inclusive upper bound and must succeed.
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+
+    let result = client.list_for_financing(&invoice_id, &5000);
+    assert!(result);
+
+    let invoice = client.get(&invoice_id);
+    assert_eq!(invoice.status, InvoiceStatus::Listed);
+    assert_eq!(invoice.discount_bps, 5000);
+
+    let contract_id = client.address.clone();
+    let events = env.events().all();
+    let (event_contract, topics, data) = events.last().expect("expected at least one event");
+    assert_eq!(event_contract, contract_id);
+    assert_eq!(
+        topics,
+        (Symbol::new(&env, "invoice_listed"), invoice_id.clone()).into_val(&env)
+    );
+    assert_eq!(u32::try_from_val(&env, &data).unwrap(), 5000u32);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #9)")]
+fn test_list_for_financing_discount_bps_one_above_max_boundary_panics() {
+    // discount_bps == 5001 is one past the inclusive upper bound and must panic
+    // with DiscountTooHigh (#9). Pins the exact boundary alongside the existing
+    // test_list_fails_discount_too_high regression test.
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &5001);
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth")]
+fn test_list_for_financing_non_issuer_panics() {
+    let (env, client, issuer, _buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &_buyer, &1_000_000_000, &due_date, &usdc);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Created);
+
+    env.set_auths(&[]);
+    client.list_for_financing(&invoice_id, &200);
 }
 
 #[test]
@@ -549,4 +669,942 @@ fn test_set_pool_contract_emits_event_on_update() {
     assert_eq!(old, first_pool);
     let new: Address = Address::try_from_val(&env, &event.1.get(2).unwrap()).unwrap();
     assert_eq!(new, second_pool);
+}
+
+// ===================== RESTORED TESTS (issue #205 deletion) =====================
+
+#[test]
+fn test_expire_listing_transitions_to_expired_after_window() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+
+    client.list_for_financing(&invoice_id, &200);
+    client.set_expiry_window(&100);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 101);
+
+    let result = client.expire_listing(&invoice_id);
+    assert!(result);
+
+    let invoice = client.get(&invoice_id);
+    assert_eq!(invoice.status, InvoiceStatus::Expired);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_trigger_default_from_created_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Created);
+
+    // A freshly created invoice is not Funded/Active/Confirmed, so defaulting
+    // it must be rejected with InvalidStatusTransition (#8).
+    env.ledger().set_timestamp(due_date + 1);
+    client.trigger_default(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_trigger_default_from_listed_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Listed);
+
+    // A Listed invoice has not been funded, so defaulting it must be rejected
+    // with InvalidStatusTransition (#8).
+    env.ledger().set_timestamp(due_date + 1);
+    client.trigger_default(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_trigger_default_from_repaid_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool_id = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool_id);
+    client.mark_funded(&invoice_id, &pool_id, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+    client.repay(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Repaid);
+
+    // A Repaid invoice is terminal, so defaulting it must be rejected with
+    // InvalidStatusTransition (#8).
+    env.ledger().set_timestamp(due_date + 1);
+    client.trigger_default(&invoice_id);
+}
+
+#[test]
+fn test_trigger_default_succeeds_at_exact_due_date() {
+    // Boundary test: default must be allowed when `now == due_date`
+    // (previously panicked due to `<=` comparison — issue #200)
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool_id = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool_id);
+    client.mark_funded(&invoice_id, &pool_id, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+
+    // Set ledger to exactly the due date
+    env.ledger().set_timestamp(due_date);
+
+    let result = client.trigger_default(&invoice_id);
+    assert!(result);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Defaulted);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #11)")]
+fn test_trigger_default_fails_before_due_date() {
+    // Negative test: default must NOT be allowed when `now < due_date`
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool_id = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool_id);
+    client.mark_funded(&invoice_id, &pool_id, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+
+    // Set ledger to 1 second before the due date — should panic
+    env.ledger().set_timestamp(due_date - 1);
+
+    client.trigger_default(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_trigger_default_stranger_panics() {
+    let env = Env::default();
+
+    let registry_id = env.register_contract(None, MockRegistry);
+    let registry_client = MockRegistryClient::new(&env, &registry_id);
+
+    let issuer = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    registry_client.register(&issuer);
+    registry_client.register(&buyer);
+
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "initialize",
+            args: (admin.clone(), registry_id.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.initialize(&admin, &registry_id);
+
+    let usdc = Address::generate(&env);
+    let due_date = env.ledger().timestamp() + 86400;
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &issuer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "create",
+            args: (
+                issuer.clone(),
+                buyer.clone(),
+                1_000_000_000u128,
+                due_date,
+                usdc.clone(),
+            )
+                .into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &issuer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "list_for_financing",
+            args: (invoice_id.clone(), 200u32).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool_id = mock_pool_with_asset(&env, &usdc);
+
+    // Set pool contract (admin auth)
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "set_pool_contract",
+            args: (pool_id.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.set_pool_contract(&pool_id);
+
+    // mark_funded requires pool auth
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &pool_id,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "mark_funded",
+            args: (
+                invoice_id.clone(),
+                pool_id.clone(),
+                usdc.clone(),
+                980_000_000u128,
+            )
+                .into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.mark_funded(&invoice_id, &pool_id, &usdc, &980_000_000);
+
+    // mark_shipped by issuer
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &issuer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "mark_shipped",
+            args: (invoice_id.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.mark_shipped(&invoice_id);
+
+    // confirm delivery by issuer and buyer
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &issuer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "confirm_delivery",
+            args: (invoice_id.clone(), issuer.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.confirm_delivery(&invoice_id, &issuer);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &buyer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "confirm_delivery",
+            args: (invoice_id.clone(), buyer.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.confirm_delivery(&invoice_id, &buyer);
+
+    // Fast forward past due date
+    env.ledger().set_timestamp(due_date + 1);
+
+    // Now call trigger_default without mocking admin auth -> should panic with NotAuthorized
+    client.trigger_default(&invoice_id);
+}
+
+#[test]
+fn test_expire_listing_succeeds_by_issuer() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    // Fast forward ledger time by 7 days + 1 second
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60 + 1);
+
+    let result = client.expire_listing(&invoice_id);
+    assert!(result);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Expired);
+}
+
+#[test]
+fn test_expire_listing_succeeds_by_admin() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    // Fast forward ledger time by 7 days + 1 second
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60 + 1);
+
+    let result = client.expire_listing(&invoice_id);
+    assert!(result);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Expired);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #14)")]
+fn test_expire_listing_early_panics() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    // Fast forward ledger time by only 5 days (less than 7 days)
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 5 * 24 * 60 * 60);
+
+    client.expire_listing(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_expire_listing_wrong_status_panics() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+
+    // Fast forward ledger time
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60 + 1);
+
+    client.expire_listing(&invoice_id);
+}
+
+#[test]
+fn test_expire_listing_configurable_window() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    // Set expiry window to 1 day (86400 seconds)
+    client.set_expiry_window(&86400);
+    assert_eq!(client.get_expiry_window(), 86400);
+
+    // Fast forward by 1 day + 1 second
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 86400 + 1);
+
+    let result = client.expire_listing(&invoice_id);
+    assert!(result);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Expired);
+}
+
+#[test]
+fn test_expire_listing_exact_boundary() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    // Fast forward by exact expiry window (7 days)
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60);
+
+    let result = client.expire_listing(&invoice_id);
+    assert!(result);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Expired);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #14)")]
+fn test_expire_listing_one_second_before_boundary_panics() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    // Fast forward to 1 second before expiry window
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60 - 1);
+
+    client.expire_listing(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #15)")]
+fn test_expire_listing_overflow_panics() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    env.ledger().set_timestamp(100);
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    // Set an expiry window that will overflow u64 when added to listed_at (100 + u64::MAX > u64::MAX)
+    client.set_expiry_window(&u64::MAX);
+
+    client.expire_listing(&invoice_id);
+}
+
+#[test]
+fn test_set_expiry_window_emits_event() {
+    let (env, client, _, _, _, _) = setup();
+    let window: u64 = 86400;
+
+    client.set_expiry_window(&window);
+
+    let contract_id = client.address.clone();
+    let events = env.events().all();
+    assert_eq!(
+        events,
+        vec![
+            &env,
+            (
+                contract_id,
+                (Symbol::new(&env, "expiry_window_set"),).into_val(&env),
+                window.into_val(&env),
+            )
+        ]
+    );
+}
+
+#[test]
+fn test_invoice_id_generation_is_deterministic() {
+    // Test that invoice ID generation is deterministic for the same inputs
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let face_value = 1_000_000_000u128;
+
+    // Create first invoice
+    let invoice_id_1 = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+
+    // Reset counter to create another invoice with same parameters (except counter)
+    // We need to verify that same issuer/buyer/value/date with different counter produces different IDs
+    let invoice_id_2 = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+
+    // Different counter should produce different IDs
+    assert_ne!(invoice_id_1, invoice_id_2);
+
+    // Verify both invoices exist and have correct data
+    assert_eq!(client.get(&invoice_id_1).issuer, issuer);
+    assert_eq!(client.get(&invoice_id_2).issuer, issuer);
+}
+
+#[test]
+fn test_invoice_ids_unique_for_different_issuers() {
+    // Test that different issuer/buyer combinations produce unique IDs
+    let (env, client, issuer, buyer, registry, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let face_value = 1_000_000_000u128;
+
+    // Create first invoice
+    let invoice_id_1 = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+
+    // Create second invoice with different issuer
+    let issuer2 = Address::generate(&env);
+    registry.register(&issuer2);
+    let invoice_id_2 = client.create(&issuer2, &buyer, &face_value, &due_date, &usdc);
+
+    // Different issuers should produce different IDs even with same other parameters
+    assert_ne!(invoice_id_1, invoice_id_2);
+
+    // Verify invoices have correct issuers
+    assert_eq!(client.get(&invoice_id_1).issuer, issuer);
+    assert_eq!(client.get(&invoice_id_2).issuer, issuer2);
+}
+
+#[test]
+fn test_invoice_ids_unique_for_different_buyers() {
+    // Test that different buyer combinations produce unique IDs
+    let (env, client, issuer, buyer, registry, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let face_value = 1_000_000_000u128;
+
+    // Create first invoice
+    let invoice_id_1 = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+
+    // Create second invoice with different buyer
+    let buyer2 = Address::generate(&env);
+    registry.register(&buyer2);
+    let invoice_id_2 = client.create(&issuer, &buyer2, &face_value, &due_date, &usdc);
+
+    // Different buyers should produce different IDs even with same other parameters
+    assert_ne!(invoice_id_1, invoice_id_2);
+
+    // Verify invoices have correct buyers
+    assert_eq!(client.get(&invoice_id_1).buyer, buyer);
+    assert_eq!(client.get(&invoice_id_2).buyer, buyer2);
+}
+
+#[test]
+fn test_invoice_ids_unique_for_different_face_values() {
+    // Test that different face values produce unique IDs
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+
+    // Create first invoice
+    let invoice_id_1 = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+
+    // Create second invoice with different face value
+    let invoice_id_2 = client.create(&issuer, &buyer, &2_000_000_000, &due_date, &usdc);
+
+    // Different face values should produce different IDs
+    assert_ne!(invoice_id_1, invoice_id_2);
+
+    // Verify invoices have correct values
+    assert_eq!(client.get(&invoice_id_1).face_value, 1_000_000_000);
+    assert_eq!(client.get(&invoice_id_2).face_value, 2_000_000_000);
+}
+
+#[test]
+fn test_invoice_ids_unique_for_different_due_dates() {
+    // Test that different due dates produce unique IDs
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let face_value = 1_000_000_000u128;
+    let due_date_1 = env.ledger().timestamp() + 86400;
+    let due_date_2 = env.ledger().timestamp() + 172800;
+
+    // Create first invoice
+    let invoice_id_1 = client.create(&issuer, &buyer, &face_value, &due_date_1, &usdc);
+
+    // Create second invoice with different due date
+    let invoice_id_2 = client.create(&issuer, &buyer, &face_value, &due_date_2, &usdc);
+
+    // Different due dates should produce different IDs
+    assert_ne!(invoice_id_1, invoice_id_2);
+
+    // Verify invoices have correct due dates
+    assert_eq!(client.get(&invoice_id_1).due_date, due_date_1);
+    assert_eq!(client.get(&invoice_id_2).due_date, due_date_2);
+}
+
+#[test]
+fn test_invoice_ids_unique_for_different_assets() {
+    // Test that different funding assets produce unique IDs
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let face_value = 1_000_000_000u128;
+
+    // Create first invoice with usdc
+    let invoice_id_1 = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+
+    // Create a different token asset
+    let other_token = env.register_contract(None, MockToken);
+
+    // Create second invoice with different asset
+    let invoice_id_2 = client.create(&issuer, &buyer, &face_value, &due_date, &other_token);
+
+    // Different assets should produce different IDs
+    assert_ne!(invoice_id_1, invoice_id_2);
+
+    // Verify invoices have correct assets
+    assert_eq!(client.get(&invoice_id_1).funding_asset, usdc);
+    assert_eq!(client.get(&invoice_id_2).funding_asset, other_token);
+}
+
+#[test]
+fn test_multiple_invoices_have_unique_ids() {
+    // Test that creating multiple invoices produces unique IDs (counter increments)
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let face_value = 1_000_000_000u128;
+
+    let mut ids: soroban_sdk::Vec<BytesN<32>> = soroban_sdk::Vec::new(&env);
+    for _ in 0..5 {
+        let id = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+        ids.push_back(id);
+    }
+
+    // All IDs should be unique due to incrementing counter
+    for i in 0..ids.len() {
+        for j in (i + 1)..ids.len() {
+            assert_ne!(
+                ids.get_unchecked(i),
+                ids.get_unchecked(j),
+                "Invoice IDs should be unique"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_existing_valid_addresses_still_work() {
+    // Regression test: verify existing valid address formats still generate valid invoice IDs
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let face_value = 1_000_000_000u128;
+    let due_date = env.ledger().timestamp() + 86400;
+
+    // Should not panic and should return a valid invoice ID
+    let invoice_id = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+
+    // Verify invoice exists and is valid
+    let invoice = client.get(&invoice_id);
+    assert_eq!(invoice.issuer, issuer);
+    assert_eq!(invoice.buyer, buyer);
+    assert_eq!(invoice.face_value, face_value);
+    assert_eq!(invoice.due_date, due_date);
+    assert_eq!(invoice.status, InvoiceStatus::Created);
+}
+
+#[test]
+#[should_panic]
+fn test_expire_listing_stranger_panics() {
+    let env = Env::default();
+
+    let registry_id = env.register_contract(None, MockRegistry);
+    let registry_client = MockRegistryClient::new(&env, &registry_id);
+
+    let issuer = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    registry_client.register(&issuer);
+    registry_client.register(&buyer);
+
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "initialize",
+            args: (admin.clone(), registry_id.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.initialize(&admin, &registry_id);
+
+    let usdc = Address::generate(&env);
+    let due_date = env.ledger().timestamp() + 86400;
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &issuer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "create",
+            args: (
+                issuer.clone(),
+                buyer.clone(),
+                1_000_000_000u128,
+                due_date,
+                usdc.clone(),
+            )
+                .into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &issuer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "list_for_financing",
+            args: (invoice_id.clone(), 200u32).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool_id = mock_pool_with_asset(&env, &usdc);
+
+    // Set pool contract (admin auth)
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "set_pool_contract",
+            args: (pool_id.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.set_pool_contract(&pool_id);
+
+    // mark_funded requires pool auth
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &pool_id,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "mark_funded",
+            args: (
+                invoice_id.clone(),
+                pool_id.clone(),
+                usdc.clone(),
+                980_000_000u128,
+            )
+                .into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.mark_funded(&invoice_id, &pool_id, &usdc, &980_000_000);
+
+    // mark_shipped by issuer
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &issuer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "mark_shipped",
+            args: (invoice_id.clone(),).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.mark_shipped(&invoice_id);
+
+    // confirm delivery by issuer and buyer
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &issuer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "confirm_delivery",
+            args: (invoice_id.clone(), issuer.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.confirm_delivery(&invoice_id, &issuer);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &buyer,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "confirm_delivery",
+            args: (invoice_id.clone(), buyer.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.confirm_delivery(&invoice_id, &buyer);
+
+    // Fast forward past due date
+    env.ledger().set_timestamp(due_date + 1);
+
+    // Now call expire_listing without mocking auths for issuer or admin -> should panic due to failed require_auth
+    client.expire_listing(&invoice_id);
+}
+
+// ===================== END RESTORED TESTS =====================
+
+// ============================== REPAY TESTS ==============================
+
+#[test]
+fn test_repay_from_confirmed() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Confirmed);
+
+    let events_before = env.events().all().len();
+    client.repay(&invoice_id);
+
+    let invoice = client.get(&invoice_id);
+    assert_eq!(invoice.status, InvoiceStatus::Repaid);
+    assert!(invoice.repaid_at.is_some());
+    assert!(env.events().all().len() > events_before);
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth")]
+fn test_repay_wrong_auth_panics() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Confirmed);
+
+    env.set_auths(&[]);
+    client.repay(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_repay_from_created_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Created);
+    client.repay(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_repay_from_listed_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Listed);
+    client.repay(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_repay_from_funded_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Funded);
+    client.repay(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_repay_from_active_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Active);
+    client.repay(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_repay_from_repaid_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+    client.repay(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Repaid);
+    client.repay(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_repay_from_defaulted_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+
+    env.ledger().set_timestamp(due_date + 1);
+    client.trigger_default(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Defaulted);
+
+    client.repay(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_repay_from_expired_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    client.set_expiry_window(&100);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 101);
+    client.expire_listing(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Expired);
+
+    client.repay(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #17)")]
+fn test_create_fails_counter_overflow() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+
+    env.as_contract(&client.address, || {
+        env.storage()
+            .instance()
+            .set(&crate::DataKey::Counter, &u64::MAX);
+    });
+
+    client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+}
+
+// ============== ISSUE #201: TYPED ERRORS FOR UNINITIALIZED CONTRACT ==============
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_create_fails_uninitialized_registry() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let registry_id = env.register_contract(None, MockRegistry);
+    let registry_client = MockRegistryClient::new(&env, &registry_id);
+
+    let issuer = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    registry_client.register(&issuer);
+    registry_client.register(&buyer);
+
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+
+    let due_date = env.ledger().timestamp() + 86400;
+    let usdc = Address::generate(&env);
+    client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_create_fails_missing_counter() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let registry_id = env.register_contract(None, MockRegistry);
+    let registry_client = MockRegistryClient::new(&env, &registry_id);
+
+    let issuer = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    registry_client.register(&issuer);
+    registry_client.register(&buyer);
+
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &registry_id);
+
+    env.as_contract(&client.address, || {
+        env.storage().instance().remove(&crate::DataKey::Counter);
+    });
+
+    let due_date = env.ledger().timestamp() + 86400;
+    let usdc = Address::generate(&env);
+    client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
 }
