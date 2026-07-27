@@ -1768,3 +1768,800 @@ fn test_move_status_index_deduplicates_repeated_transition() {
         "Created status count should not be affected by replayed transition"
     );
 }
+
+// ============== ISSUE #213: INVALID STATUS TRANSITIONS ==============
+
+// mark_funded from invalid statuses
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_mark_funded_from_created_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Created);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_mark_funded_from_funded_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Funded);
+
+    // Try to fund again
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_mark_funded_from_active_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Active);
+
+    // Try to fund an Active invoice
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_mark_funded_from_confirmed_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Confirmed);
+
+    // Try to fund a Confirmed invoice
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_mark_funded_from_repaid_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+    client.repay(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Repaid);
+
+    // Try to fund a Repaid invoice
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_mark_funded_from_defaulted_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+
+    env.ledger().set_timestamp(due_date + 1);
+    client.trigger_default(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Defaulted);
+
+    // Try to fund a Defaulted invoice
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_mark_funded_from_expired_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+
+    client.set_expiry_window(&100);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 101);
+    client.expire_listing(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Expired);
+
+    // Try to fund an Expired invoice
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+}
+
+// mark_shipped from invalid statuses
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_mark_shipped_from_created_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Created);
+
+    client.mark_shipped(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_mark_shipped_from_listed_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Listed);
+
+    client.mark_shipped(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_mark_shipped_from_active_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Active);
+
+    // Try to ship again
+    client.mark_shipped(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_mark_shipped_from_confirmed_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Confirmed);
+
+    // Try to ship a Confirmed invoice
+    client.mark_shipped(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_mark_shipped_from_repaid_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+    client.repay(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Repaid);
+
+    // Try to ship a Repaid invoice
+    client.mark_shipped(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_mark_shipped_from_defaulted_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+
+    env.ledger().set_timestamp(due_date + 1);
+    client.trigger_default(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Defaulted);
+
+    // Try to ship a Defaulted invoice
+    client.mark_shipped(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_mark_shipped_from_expired_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    client.set_expiry_window(&100);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 101);
+    client.expire_listing(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Expired);
+
+    // Try to ship an Expired invoice
+    client.mark_shipped(&invoice_id);
+}
+
+// confirm_delivery from invalid statuses
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_confirm_delivery_from_created_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Created);
+
+    client.confirm_delivery(&invoice_id, &issuer);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_confirm_delivery_from_listed_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Listed);
+
+    client.confirm_delivery(&invoice_id, &issuer);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_confirm_delivery_from_funded_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Funded);
+
+    client.confirm_delivery(&invoice_id, &issuer);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_confirm_delivery_from_confirmed_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Confirmed);
+
+    // Try to confirm again - should panic with InvalidStatusTransition (#8)
+    // because the status check runs before the AlreadyConfirmed check
+    client.confirm_delivery(&invoice_id, &issuer);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_confirm_delivery_from_repaid_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+    client.repay(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Repaid);
+
+    // Try to confirm a Repaid invoice
+    client.confirm_delivery(&invoice_id, &issuer);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_confirm_delivery_from_defaulted_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+
+    env.ledger().set_timestamp(due_date + 1);
+    client.trigger_default(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Defaulted);
+
+    // Try to confirm a Defaulted invoice
+    client.confirm_delivery(&invoice_id, &issuer);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_confirm_delivery_from_expired_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    client.set_expiry_window(&100);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 101);
+    client.expire_listing(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Expired);
+
+    // Try to confirm an Expired invoice
+    client.confirm_delivery(&invoice_id, &issuer);
+}
+
+// repay_early from invalid statuses
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_repay_early_from_created_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Created);
+
+    client.repay_early(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_repay_early_from_listed_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Listed);
+
+    client.repay_early(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_repay_early_from_funded_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Funded);
+
+    client.repay_early(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_repay_early_from_active_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Active);
+
+    client.repay_early(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_repay_early_from_repaid_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+    client.repay_early(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Repaid);
+
+    // Try to repay early again
+    client.repay_early(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_repay_early_from_defaulted_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+
+    env.ledger().set_timestamp(due_date + 1);
+    client.trigger_default(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Defaulted);
+
+    client.repay_early(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_repay_early_from_expired_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    client.set_expiry_window(&100);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 101);
+    client.expire_listing(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Expired);
+
+    client.repay_early(&invoice_id);
+}
+
+// repay_early from Confirmed but past due date (should fail with InvalidStatusTransition #8 due to the check)
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_repay_early_past_due_date_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Confirmed);
+
+    // Advance past due date
+    env.ledger().set_timestamp(due_date + 1);
+
+    // Should fail because now >= due_date
+    client.repay_early(&invoice_id);
+}
+
+// trigger_default from Expired status (missing test)
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_trigger_default_from_expired_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    client.set_expiry_window(&100);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 101);
+    client.expire_listing(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Expired);
+
+    // Expired is not Funded/Active/Confirmed, so should be rejected
+    env.ledger().set_timestamp(due_date + 1);
+    client.trigger_default(&invoice_id);
+}
+
+// expire_listing from invalid statuses
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_expire_listing_from_funded_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Funded);
+
+    // Fast forward time
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60 + 1);
+
+    // Try to expire a Funded invoice
+    client.expire_listing(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_expire_listing_from_active_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Active);
+
+    // Fast forward time
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60 + 1);
+
+    // Try to expire an Active invoice
+    client.expire_listing(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_expire_listing_from_confirmed_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Confirmed);
+
+    // Fast forward time
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60 + 1);
+
+    // Try to expire a Confirmed invoice
+    client.expire_listing(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_expire_listing_from_repaid_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+    client.repay(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Repaid);
+
+    // Fast forward time
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60 + 1);
+
+    // Try to expire a Repaid invoice
+    client.expire_listing(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_expire_listing_from_defaulted_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+
+    env.ledger().set_timestamp(due_date + 1);
+    client.trigger_default(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Defaulted);
+
+    // Fast forward time
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60 + 1);
+
+    // Try to expire a Defaulted invoice
+    client.expire_listing(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_expire_listing_from_expired_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    client.set_expiry_window(&100);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 101);
+    client.expire_listing(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Expired);
+
+    // Fast forward time
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60 + 1);
+
+    // Try to expire an already Expired invoice
+    client.expire_listing(&invoice_id);
+}
+
+// list_for_financing from invalid statuses
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_list_for_financing_from_funded_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Funded);
+
+    // Try to list a Funded invoice
+    client.list_for_financing(&invoice_id, &200);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_list_for_financing_from_active_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Active);
+
+    // Try to list an Active invoice
+    client.list_for_financing(&invoice_id, &200);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_list_for_financing_from_confirmed_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Confirmed);
+
+    // Try to list a Confirmed invoice
+    client.list_for_financing(&invoice_id, &200);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_list_for_financing_from_repaid_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+    client.repay(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Repaid);
+
+    // Try to list a Repaid invoice
+    client.list_for_financing(&invoice_id, &200);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_list_for_financing_from_defaulted_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+
+    env.ledger().set_timestamp(due_date + 1);
+    client.trigger_default(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Defaulted);
+
+    // Try to list a Defaulted invoice
+    client.list_for_financing(&invoice_id, &200);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_list_for_financing_from_expired_rejected() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    client.set_expiry_window(&100);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 101);
+    client.expire_listing(&invoice_id);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Expired);
+
+    // Try to list an Expired invoice
+    client.list_for_financing(&invoice_id, &200);
+}
