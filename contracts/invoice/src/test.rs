@@ -2095,11 +2095,13 @@ fn test_create_fails_missing_counter() {
     let admin = Address::generate(&env);
     client.initialize(&admin, &registry_id);
 
+    let usdc = Address::generate(&env);
+    client.add_supported_asset(&usdc);
+
     env.as_contract(&client.address, || {
         env.storage().instance().remove(&crate::DataKey::Counter);
     });
 
     let due_date = env.ledger().timestamp() + 86400;
-    let usdc = Address::generate(&env);
     client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
 }
