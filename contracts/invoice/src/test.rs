@@ -6,7 +6,11 @@ use soroban_sdk::{
     vec, Address, BytesN, Env, IntoVal, Symbol, TryFromVal,
 };
 
-use crate::{DataKey, InvoiceContract, InvoiceContractClient, InvoiceStatus};
+use proptest::prelude::ProptestConfig;
+use proptest::prelude::*;
+use proptest::test_runner::TestRunner;
+
+use crate::{InvoiceContract, InvoiceContractClient, InvoiceStatus};
 
 #[contract]
 pub struct MockRegistry;
@@ -101,22 +105,23 @@ impl MockPool {
     }
 }
 
-#[contract]
-pub struct MockToken;
-
-#[contractimpl]
-impl MockToken {
-    pub fn transfer(_env: Env, _from: Address, _to: Address, _amount: i128) {
-        // no-op for tests (auth is mocked)
-    }
-}
-
 type Setup = (
     Env,
     InvoiceContractClient<'static>,
     Address,
     Address,
     MockRegistryClient<'static>,
+    Address,
+);
+
+#[allow(dead_code)]
+type SetupWithAdmin = (
+    Env,
+    InvoiceContractClient<'static>,
+    Address,
+    Address,
+    MockRegistryClient<'static>,
+    Address,
     Address,
 );
 
@@ -139,13 +144,11 @@ fn setup() -> Setup {
     client.initialize(&admin, &registry_id);
 
     let usdc_asset = env.register_contract(None, MockToken);
-    client.add_supported_asset(&usdc_asset);
-    let token_id = env.register_contract(None, MockToken);
-    let usdc_asset = token_id;
 
     (env, client, issuer, buyer, registry_client, usdc_asset)
 }
 
+#[allow(dead_code)]
 fn setup_with_admin() -> SetupWithAdmin {
     let env = Env::default();
     env.mock_all_auths();
@@ -165,7 +168,6 @@ fn setup_with_admin() -> SetupWithAdmin {
     client.initialize(&admin, &registry_id);
 
     let usdc_asset = env.register_contract(None, MockToken);
-    client.add_supported_asset(&usdc_asset);
 
     (
         env,
@@ -215,12 +217,16 @@ fn test_double_initialize_panics() {
 
     // Verify admin and registry were stored correctly
     env.as_contract(&contract_id, || {
-        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&crate::DataKey::Admin)
+            .unwrap();
         assert_eq!(stored_admin, admin);
         let stored_registry: Address = env
             .storage()
             .instance()
-            .get(&DataKey::RegistryContract)
+            .get(&crate::DataKey::RegistryContract)
             .unwrap();
         assert_eq!(stored_registry, registry_id);
     });
@@ -1617,12 +1623,12 @@ fn test_repay_emits_event() {
     let contract_id = client.address.clone();
     let events = env.events().all();
     let found = events.iter().any(|e| {
-        let (c, topic, _data): (
-            soroban_sdk::Address,
-            (soroban_sdk::Symbol, BytesN<32>),
-            u128,
-        ) = e.into_val(&env);
-        c == contract_id && topic.0 == Symbol::new(&env, "invoice_repaid")
+        let (c, topics, _data) = e;
+        if c != contract_id || topics.len() != 2 {
+            return false;
+        }
+        let event_name: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
+        event_name == Symbol::new(&env, "invoice_repaid")
     });
     assert!(found);
 }
@@ -1677,8 +1683,7 @@ fn test_repay_fails_no_auth() {
     }]);
     client.initialize(&admin, &registry_id);
 
-    let usdc = Address::generate(&env);
-    client.add_supported_asset(&usdc);
+    let usdc = env.register_contract(None, MockToken);
     let due_date = env.ledger().timestamp() + 86400;
 
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
@@ -1847,9 +1852,10 @@ fn prop_expiry_window_bounds_are_respected_across_values() {
 // ============== SUPPORTED ASSET TESTS ==============
 
 #[test]
-fn test_add_supported_asset() {
-    let (env, client, _, _, _, _) = setup();
-    let asset = Address::generate(&env);
+#[should_panic(expected = "Error(Contract, #16)")]
+fn test_create_fails_face_value_one_above_max() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
 
     client.create(
         &issuer,
