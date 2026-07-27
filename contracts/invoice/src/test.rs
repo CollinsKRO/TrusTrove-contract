@@ -187,6 +187,24 @@ fn test_create_invoice_with_verified_parties() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #4)")]
+fn test_create_fails_unverified_issuer() {
+    let (env, client, _issuer, buyer, _, usdc) = setup();
+    let unverified_issuer = Address::generate(&env);
+    let due_date = env.ledger().timestamp() + 86400;
+    client.create(&unverified_issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_create_fails_unverified_buyer() {
+    let (env, client, issuer, _buyer, _, usdc) = setup();
+    let unverified_buyer = Address::generate(&env);
+    let due_date = env.ledger().timestamp() + 86400;
+    client.create(&issuer, &unverified_buyer, &1_000_000_000, &due_date, &usdc);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #6)")]
 fn test_create_fails_zero_face_value() {
     let (env, client, issuer, buyer, _, usdc) = setup();
