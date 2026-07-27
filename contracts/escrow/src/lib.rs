@@ -277,26 +277,7 @@ impl EscrowContract {
     /// let result = client.handle_default(&invoice_id, &caller);
     /// ```
     pub fn handle_default(env: Env, invoice_id: BytesN<32>, caller: Address) -> bool {
-        // Releases the escrowed funds to the pool when an invoice defaults.
-        //
-        // # Arguments
-        // * `env` - The Soroban environment.
-        // * `invoice_id` - The invoice that defaulted.
-        // * `caller` - The caller initiating the default (must be admin or pool).
-        //
-        // # Returns
-        // * `bool` - `true` when the default is handled.
-        //
-        // # Panics
-        // * `NotFound` if no escrow record exists for the invoice.
-        // * `NotAuthorized` if the caller is neither admin nor pool.
-        //
-        // # Example
-        // ```ignore
-        // client.handle_default(&invoice_id, &pool);
-        // ```
         let key = DataKey::Locked(invoice_id.clone());
-        let admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         let Some(record) = env.storage().persistent().get::<_, EscrowRecord>(&key) else {
             return false;
         };
@@ -316,12 +297,6 @@ impl EscrowContract {
             panic_with_error!(&env, EscrowError::NotAuthorized);
         }
 
-        let record: EscrowRecord = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .unwrap_or_else(|| panic_with_error!(&env, EscrowError::NotFound));
-        let usdc_id: Address = env.storage().instance().get(&DataKey::UsdcAsset).unwrap();
         let now = env.ledger().timestamp();
         if now - record.locked_at < DEFAULT_MIN_LOCK_SECONDS {
             panic_with_error!(&env, EscrowError::NotAuthorized);
