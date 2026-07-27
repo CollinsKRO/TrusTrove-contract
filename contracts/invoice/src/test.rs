@@ -3,7 +3,7 @@
 use soroban_sdk::{
     contract, contractimpl, contracttype,
     testutils::{Address as _, Events as _, Ledger},
-    vec, Address, BytesN, Env, IntoVal, Symbol, TryFromVal,
+    vec, Address, BytesN, Env, IntoVal, String, Symbol, TryFromVal,
 };
 
 use crate::{InvoiceContract, InvoiceContractClient, InvoiceStatus};
@@ -1662,4 +1662,73 @@ fn test_create_fails_missing_counter() {
     let due_date = env.ledger().timestamp() + 86400;
     let usdc = Address::generate(&env);
     client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+}
+
+// ============== ISSUE #195: DEDUPLICATE INVOICE_ID IN INDEXES ==============
+
+#[test]
+fn test_move_status_index_deduplicates_repeated_transition() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+
+    // Create TWO invoices so Created count > 1, allowing replay without underflow
+    let invoice_id_1 = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    let invoice_id_2 = client.create(&issuer, &buyer, &2_000_000_000, &due_date, &usdc);
+
+    // Initial state: both invoices are Created
+    assert_eq!(client.get(&invoice_id_1).status, InvoiceStatus::Created);
+    assert_eq!(client.get(&invoice_id_2).status, InvoiceStatus::Created);
+
+    // First transition: invoice_id_1 Created -> Listed (via public API)
+    client.list_for_financing(&invoice_id_1, &200);
+    assert_eq!(client.get(&invoice_id_1).status, InvoiceStatus::Listed);
+    assert_eq!(client.get(&invoice_id_2).status, InvoiceStatus::Created);
+
+    // Verify index state after first transition
+    let listed_count_before = client.get_by_status(&InvoiceStatus::Listed).len();
+    let created_count_before = client.get_by_status(&InvoiceStatus::Created).len();
+    assert_eq!(listed_count_before, 1);
+    assert_eq!(created_count_before, 1);
+
+    // Simulate a replayed transition for invoice_id_1 by directly calling move_status_index
+    // This bypasses the status check in the public API
+    env.as_contract(&client.address, || {
+        super::move_status_index(
+            &env,
+            &invoice_id_1,
+            InvoiceStatus::Created,
+            InvoiceStatus::Listed,
+        );
+    });
+
+    // The status should still be Listed (no actual state change)
+    assert_eq!(client.get(&invoice_id_1).status, InvoiceStatus::Listed);
+    assert_eq!(client.get(&invoice_id_2).status, InvoiceStatus::Created);
+
+    // The index should NOT have duplicate entries - length should remain 1
+    let listed_count_after = client.get_by_status(&InvoiceStatus::Listed).len();
+    assert_eq!(
+        listed_count_after, 1,
+        "Repeated transition should not duplicate index entries"
+    );
+
+    // Created count should also not be affected (still 1 for invoice_id_2)
+    let created_count_after = client.get_by_status(&InvoiceStatus::Created).len();
+    assert_eq!(
+        created_count_after, 1,
+        "Created count should not be affected by replayed transition"
+    );
+
+    // Status counts should not be inflated
+    let counts = client.get_counts();
+    let listed_count = counts.get(String::from_str(&env, "Listed")).unwrap();
+    let created_count = counts.get(String::from_str(&env, "Created")).unwrap();
+    assert_eq!(
+        listed_count, 1,
+        "Listed status count should not be inflated by replayed transition"
+    );
+    assert_eq!(
+        created_count, 1,
+        "Created status count should not be affected by replayed transition"
+    );
 }

@@ -1164,9 +1164,31 @@ impl InvoiceContract {
     }
 }
 
+/// Adds an invoice ID to the issuer's index if not already present.
+///
+/// # Arguments
+/// * `env` - The Soroban environment.
+/// * `issuer` - The issuer address.
+/// * `invoice_id` - The invoice ID to add.
+///
+/// # Panics
+/// Does not panic.
+///
+/// # Returns
+/// * `()` - No value is returned.
 fn extend_issuer_index(env: &Env, issuer: &Address, invoice_id: &BytesN<32>) {
     let count_key = DataKey::IssuerIndexCount(issuer.clone());
     let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+
+    // Check if invoice_id already exists in this issuer index
+    for i in 0..count {
+        let entry_key = DataKey::IssuerIndexEntry(issuer.clone(), i);
+        let existing_id: BytesN<32> = env.storage().persistent().get(&entry_key).unwrap();
+        if existing_id == *invoice_id {
+            return; // Already exists, skip duplicate
+        }
+    }
+
     let entry_key = DataKey::IssuerIndexEntry(issuer.clone(), count);
     env.storage().persistent().set(&entry_key, invoice_id);
     env.storage().persistent().set(&count_key, &(count + 1));
@@ -1178,9 +1200,31 @@ fn extend_issuer_index(env: &Env, issuer: &Address, invoice_id: &BytesN<32>) {
         .extend_ttl(&count_key, 100, 2_000_000);
 }
 
+/// Adds an invoice ID to the buyer's index if not already present.
+///
+/// # Arguments
+/// * `env` - The Soroban environment.
+/// * `buyer` - The buyer address.
+/// * `invoice_id` - The invoice ID to add.
+///
+/// # Panics
+/// Does not panic.
+///
+/// # Returns
+/// * `()` - No value is returned.
 fn extend_buyer_index(env: &Env, buyer: &Address, invoice_id: &BytesN<32>) {
     let count_key = DataKey::BuyerIndexCount(buyer.clone());
     let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+
+    // Check if invoice_id already exists in this buyer index
+    for i in 0..count {
+        let entry_key = DataKey::BuyerIndexEntry(buyer.clone(), i);
+        let existing_id: BytesN<32> = env.storage().persistent().get(&entry_key).unwrap();
+        if existing_id == *invoice_id {
+            return; // Already exists, skip duplicate
+        }
+    }
+
     let entry_key = DataKey::BuyerIndexEntry(buyer.clone(), count);
     env.storage().persistent().set(&entry_key, invoice_id);
     env.storage().persistent().set(&count_key, &(count + 1));
@@ -1192,10 +1236,32 @@ fn extend_buyer_index(env: &Env, buyer: &Address, invoice_id: &BytesN<32>) {
         .extend_ttl(&count_key, 100, 2_000_000);
 }
 
+/// Adds an invoice ID to the status index if not already present.
+///
+/// # Arguments
+/// * `env` - The Soroban environment.
+/// * `status` - The invoice status.
+/// * `invoice_id` - The invoice ID to add.
+///
+/// # Panics
+/// Does not panic.
+///
+/// # Returns
+/// * `()` - No value is returned.
 fn extend_status_index(env: &Env, status: InvoiceStatus, invoice_id: &BytesN<32>) {
     let status_u32 = status as u32;
     let count_key = DataKey::StatusIndexCount(status_u32);
     let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+
+    // Check if invoice_id already exists in this status index
+    for i in 0..count {
+        let entry_key = DataKey::StatusIndexEntry(status_u32, i);
+        let existing_id: BytesN<32> = env.storage().persistent().get(&entry_key).unwrap();
+        if existing_id == *invoice_id {
+            return; // Already exists, skip duplicate
+        }
+    }
+
     let entry_key = DataKey::StatusIndexEntry(status_u32, count);
     env.storage().persistent().set(&entry_key, invoice_id);
     env.storage().persistent().set(&count_key, &(count + 1));
@@ -1207,7 +1273,36 @@ fn extend_status_index(env: &Env, status: InvoiceStatus, invoice_id: &BytesN<32>
         .extend_ttl(&count_key, 100, 2_000_000);
 }
 
+/// Moves an invoice ID from one status index to another, with idempotency for replayed transitions.
+///
+/// This function checks if the invoice is already in the target status index before performing
+/// any operations. If already present, it returns early without modifying counts or indexes,
+/// making replayed transitions a no-op.
+///
+/// # Arguments
+/// * `env` - The Soroban environment.
+/// * `invoice_id` - The invoice ID to move.
+/// * `from` - The source status.
+/// * `to` - The target status.
+///
+/// # Panics
+/// * `InvoiceError::InvalidStatusTransition` if the source status count underflows.
+///
+/// # Returns
+/// * `()` - No value is returned.
 fn move_status_index(env: &Env, invoice_id: &BytesN<32>, from: InvoiceStatus, to: InvoiceStatus) {
+    // Check if invoice is already in the target status index (idempotency for replayed transitions)
+    let to_u32 = to as u32;
+    let count_key = DataKey::StatusIndexCount(to_u32);
+    let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+    for i in 0..count {
+        let entry_key = DataKey::StatusIndexEntry(to_u32, i);
+        let existing_id: BytesN<32> = env.storage().persistent().get(&entry_key).unwrap();
+        if existing_id == *invoice_id {
+            return; // Already in target index, skip all operations
+        }
+    }
+
     decrement_status_count(env, from);
     increment_status_count(env, to);
     extend_status_index(env, to, invoice_id);
