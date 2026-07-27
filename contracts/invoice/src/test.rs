@@ -1521,10 +1521,13 @@ fn test_create_fails_face_value_above_max_boundary() {
     // Negative path: one stroop above MAX_FACE_VALUE must panic with InvalidAmount (#16).
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
-    let id1 = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
-    let id2 = client.create(&issuer, &buyer, &2_000_000_000, &due_date, &usdc);
-
-    assert_ne!(id1, id2);
+    client.create(
+        &issuer,
+        &buyer,
+        &(crate::MAX_FACE_VALUE + 1),
+        &due_date,
+        &usdc,
+    );
 }
 
 // ── Issue #196: repay from Funded, Active, or Confirmed ─────────────────────────
@@ -1853,21 +1856,6 @@ fn prop_expiry_window_bounds_are_respected_across_values() {
 
 #[test]
 #[should_panic(expected = "Error(Contract, #16)")]
-fn test_create_fails_face_value_one_above_max() {
-    let (env, client, issuer, buyer, _, usdc) = setup();
-    let due_date = env.ledger().timestamp() + 86400;
-
-    client.create(
-        &issuer,
-        &buyer,
-        &(crate::MAX_FACE_VALUE + 1),
-        &due_date,
-        &usdc,
-    );
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #16)")]
 fn test_create_fails_face_value_u128_max() {
     // u128::MAX must be rejected as InvalidAmount rather than overflowing downstream math.
     let (env, client, issuer, buyer, _, usdc) = setup();
@@ -1961,36 +1949,6 @@ fn test_repay_from_listed_rejected() {
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
     client.list_for_financing(&invoice_id, &200);
     assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Listed);
-    client.repay(&invoice_id);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #8)")]
-fn test_repay_from_funded_rejected() {
-    let (env, client, issuer, buyer, _, usdc) = setup();
-    let due_date = env.ledger().timestamp() + 86400;
-    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
-    client.list_for_financing(&invoice_id, &200);
-    let pool = mock_pool_with_asset(&env, &usdc);
-    client.set_pool_contract(&pool);
-    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
-    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Funded);
-    client.repay(&invoice_id);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #8)")]
-fn test_repay_from_active_rejected() {
-    let (env, client, issuer, buyer, _, usdc) = setup();
-    let due_date = env.ledger().timestamp() + 86400;
-    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
-    client.list_for_financing(&invoice_id, &200);
-    let pool = mock_pool_with_asset(&env, &usdc);
-    client.set_pool_contract(&pool);
-    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
-    client.mark_shipped(&invoice_id);
-    client.confirm_delivery(&invoice_id, &issuer);
-    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Active);
     client.repay(&invoice_id);
 }
 
