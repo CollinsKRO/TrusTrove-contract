@@ -830,19 +830,21 @@
           "v0": {
             "topics": [
               {
-                "symbol": "log"
+                "symbol": "error"
+              },
+              {
+                "error": {
+                  "contract": 3
+                }
               }
             ],
             "data": {
               "vec": [
                 {
-                  "string": "caught panic 'Not authorized' from contract function 'Symbol(obj#125)'"
+                  "string": "failing with contract error"
                 },
                 {
-                  "bytes": "0000000000000001000000000000000000000000000000000000000000000000"
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                  "u32": 3
                 }
               ]
             }
@@ -864,7 +866,32 @@
               },
               {
                 "error": {
-                  "wasm_vm": "invalid_action"
+                  "contract": 3
+                }
+              }
+            ],
+            "data": {
+              "string": "escalating error to panic"
+            }
+          }
+        }
+      },
+      "failed_call": true
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000004",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "error"
+              },
+              {
+                "error": {
+                  "contract": 3
                 }
               }
             ],
@@ -889,7 +916,7 @@
               },
               {
                 "error": {
-                  "wasm_vm": "invalid_action"
+                  "contract": 3
                 }
               }
             ],
@@ -931,7 +958,7 @@
               },
               {
                 "error": {
-                  "wasm_vm": "invalid_action"
+                  "contract": 3
                 }
               }
             ],

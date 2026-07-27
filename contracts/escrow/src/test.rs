@@ -353,7 +353,7 @@ fn test_release_to_pool_transfers_correct_amount() {
 
 #[test]
 #[should_panic(expected = "Error(Contract, #5)")]
-fn test_release_to_pool_fails_on_mismatched_repayment_amount() {
+fn test_release_to_pool_fails_on_overpayment() {
     let (env, client, _admin, _pool, _usdc_id, _contract_id) = setup();
     let invoice_id = generate_invoice_id(&env, 1);
     let amount: u128 = 1_000_000_000;
@@ -365,12 +365,37 @@ fn test_release_to_pool_fails_on_mismatched_repayment_amount() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_release_to_pool_fails_zero_repayment() {
+    let (env, client, _admin, _pool, _usdc_id, _contract_id) = setup();
+    let invoice_id = generate_invoice_id(&env, 1);
+    let amount: u128 = 1_000_000_000;
+
+    client.lock(&invoice_id, &amount);
+    client.release_to_pool(&invoice_id, &0);
+}
+
+#[test]
+fn test_release_to_pool_partial_repayment_succeeds() {
+    let (env, client, _admin, _pool, _usdc_id, _contract_id) = setup();
+    let invoice_id = generate_invoice_id(&env, 1);
+    let amount: u128 = 1_000_000_000;
+
+    client.lock(&invoice_id, &amount);
+    let partial: u128 = 500_000_000;
+    let result = client.release_to_pool(&invoice_id, &partial);
+    assert!(result);
+    assert_eq!(client.get_locked(&invoice_id), 0);
+}
+
+#[test]
 fn test_handle_default_returns_funds_to_pool() {
     let (env, client, _admin, pool, _usdc_id, _contract_id) = setup();
     let invoice_id = generate_invoice_id(&env, 1);
     let amount: u128 = 1_000_000_000;
 
     client.lock(&invoice_id, &amount);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 60);
     // Pool is the normal operational caller for default resolution
     let result = client.handle_default(&invoice_id, &pool);
     assert!(result);
@@ -387,6 +412,7 @@ fn test_handle_default_invoked_by_pool_succeeds() {
     let amount: u128 = 1_000_000_000;
 
     client.lock(&invoice_id, &amount);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 60);
 
     // Call handle_default with pool as the caller (mocking authorizations is enabled)
     let result = client.handle_default(&invoice_id, &pool);
@@ -403,6 +429,7 @@ fn test_handle_default_invoked_by_admin_succeeds() {
     let amount: u128 = 1_000_000_000;
 
     client.lock(&invoice_id, &amount);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 60);
 
     // Call handle_default with admin as the caller
     let result = client.handle_default(&invoice_id, &admin);
@@ -420,6 +447,7 @@ fn test_handle_default_admin_can_trigger() {
     let amount: u128 = 1_000_000_000;
 
     client.lock(&invoice_id, &amount);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 60);
     // Admin can directly trigger default resolution (emergency / recovery path)
     let result = client.handle_default(&invoice_id, &admin);
     assert!(result);
@@ -439,12 +467,39 @@ fn test_handle_default_returns_false_if_no_record() {
     assert!(!result);
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_handle_default_rejects_before_grace_period() {
+    let (env, client, _admin, pool, _usdc_id, _contract_id) = setup();
+    let invoice_id = generate_invoice_id(&env, 9);
+    let amount: u128 = 1_000_000_000;
+
+    client.lock(&invoice_id, &amount);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 59);
+
+    client.handle_default(&invoice_id, &pool);
+}
+
+#[test]
+fn test_handle_default_allows_at_grace_period_boundary() {
+    let (env, client, _admin, pool, _usdc_id, _contract_id) = setup();
+    let invoice_id = generate_invoice_id(&env, 10);
+    let amount: u128 = 1_000_000_000;
+
+    client.lock(&invoice_id, &amount);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 60);
+
+    let result = client.handle_default(&invoice_id, &pool);
+    assert!(result);
+    assert_eq!(client.get_locked(&invoice_id), 0);
+}
+
 // ============================================================================
 // Get Locked Tests
 // ============================================================================
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "Error(Contract, #3)")]
 fn test_handle_default_unauthorized_caller_panics() {
     let (env, client, _admin, pool, _usdc_id, _contract_id) = setup();
     let invoice_id = generate_invoice_id(&env, 1);
