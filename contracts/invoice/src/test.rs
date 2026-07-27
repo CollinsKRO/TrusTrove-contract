@@ -1287,25 +1287,129 @@ fn test_expire_listing_stranger_panics() {
 }
 
 #[test]
-fn test_invoice_id_generation_is_deterministic() {
-    // Test that invoice ID generation is deterministic for the same inputs
+fn test_unique_invoice_ids_for_identical_inputs() {
+    // Two invoices created with identical parameters (issuer, buyer, face_value, due_date, funding_asset)
+    // must receive different IDs because the internal storage Counter salt increments per invoice.
     let (env, client, issuer, buyer, _, usdc) = setup();
+    let face_value: u128 = 1_000_000_000;
     let due_date = env.ledger().timestamp() + 86400;
-    let face_value = 1_000_000_000u128;
 
-    // Create first invoice
-    let invoice_id_1 = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+    // Create two invoices with identical parameters
+    let id1 = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+    let id2 = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
 
-    // Reset counter to create another invoice with same parameters (except counter)
-    // We need to verify that same issuer/buyer/value/date with different counter produces different IDs
-    let invoice_id_2 = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+    // 1. Assert id1 != id2
+    assert_ne!(id1, id2);
 
-    // Different counter should produce different IDs
-    assert_ne!(invoice_id_1, invoice_id_2);
+    // 2. Assert state after: verify both invoices exist in persistent storage with correct fields
+    let inv1 = client.get(&id1);
+    let inv2 = client.get(&id2);
 
-    // Verify both invoices exist and have correct data
-    assert_eq!(client.get(&invoice_id_1).issuer, issuer);
-    assert_eq!(client.get(&invoice_id_2).issuer, issuer);
+    assert_eq!(inv1.id, id1);
+    assert_eq!(inv2.id, id2);
+
+    assert_eq!(inv1.issuer, issuer);
+    assert_eq!(inv2.issuer, issuer);
+    assert_eq!(inv1.buyer, buyer);
+    assert_eq!(inv2.buyer, buyer);
+
+    assert_eq!(inv1.face_value, face_value);
+    assert_eq!(inv2.face_value, face_value);
+    assert_eq!(inv1.due_date, due_date);
+    assert_eq!(inv2.due_date, due_date);
+
+    assert_eq!(inv1.funding_asset, usdc);
+    assert_eq!(inv2.funding_asset, usdc);
+    assert_eq!(inv1.status, InvoiceStatus::Created);
+    assert_eq!(inv2.status, InvoiceStatus::Created);
+
+    // Assert internal instance counter incremented to 2
+    let counter: u64 = env.as_contract(&client.address, || {
+        env.storage()
+            .instance()
+            .get(&crate::DataKey::Counter)
+            .unwrap()
+    });
+    assert_eq!(counter, 2);
+
+    // Assert index queries return both invoices
+    assert_eq!(client.get_by_issuer(&issuer).len(), 2);
+    assert_eq!(client.get_by_buyer(&buyer).len(), 2);
+    assert_eq!(client.get_by_status(&InvoiceStatus::Created).len(), 2);
+
+    // 3. Assert emitted events: two invoice_created events emitted
+    let contract_id = client.address.clone();
+    let events = env.events().all();
+    assert_eq!(events.len(), 2);
+
+    let (event1_contract, event1_topics, event1_data) =
+        events.get(0).expect("expected first event");
+    assert_eq!(event1_contract, contract_id);
+    assert_eq!(
+        event1_topics,
+        (
+            Symbol::new(&env, "invoice_created"),
+            id1.clone(),
+            issuer.clone(),
+            buyer.clone(),
+            usdc.clone(),
+        )
+            .into_val(&env)
+    );
+    assert_eq!(u128::try_from_val(&env, &event1_data).unwrap(), face_value);
+
+    let (event2_contract, event2_topics, event2_data) =
+        events.get(1).expect("expected second event");
+    assert_eq!(event2_contract, contract_id);
+    assert_eq!(
+        event2_topics,
+        (
+            Symbol::new(&env, "invoice_created"),
+            id2.clone(),
+            issuer.clone(),
+            buyer.clone(),
+            usdc.clone(),
+        )
+            .into_val(&env)
+    );
+    assert_eq!(u128::try_from_val(&env, &event2_data).unwrap(), face_value);
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_create_unauthorized_issuer_panics() {
+    let env = Env::default();
+
+    let registry_id = env.register_contract(None, MockRegistry);
+    let registry_client = MockRegistryClient::new(&env, &registry_id);
+
+    let issuer = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    registry_client.register(&issuer);
+    registry_client.register(&buyer);
+
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &contract_id,
+            fn_name: "initialize",
+            args: (admin.clone(), registry_id.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    client.initialize(&admin, &registry_id);
+
+    let usdc = Address::generate(&env);
+    let due_date = env.ledger().timestamp() + 86400;
+
+    // Call create without mocking issuer auth -> should panic with Error(Auth, InvalidAction)
+    env.mock_auths(&[]);
+    client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
 }
 
 #[test]
