@@ -212,6 +212,7 @@
     ],
     [],
     [],
+    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAARQG5",
@@ -237,6 +238,7 @@
         }
       ]
     ],
+    [],
     []
   ],
   "ledger": {
@@ -3911,6 +3913,97 @@
                 "bytes": "000000000000000000000000000000000000000000000000000000000000000a"
               },
               {
+                "symbol": "get_lp_position"
+              }
+            ],
+            "data": {
+              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "000000000000000000000000000000000000000000000000000000000000000a",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "get_lp_position"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "deposit_count"
+                  },
+                  "val": {
+                    "u32": 1
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "shares"
+                  },
+                  "val": {
+                    "u128": {
+                      "hi": 0,
+                      "lo": 100000000000
+                    }
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "usdc_value"
+                  },
+                  "val": {
+                    "u128": {
+                      "hi": 0,
+                      "lo": 100000000000
+                    }
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "yield_earned"
+                  },
+                  "val": {
+                    "u128": {
+                      "hi": 0,
+                      "lo": 0
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "000000000000000000000000000000000000000000000000000000000000000a"
+              },
+              {
                 "symbol": "receive_repayment"
               }
             ],
@@ -4109,6 +4202,97 @@
                   },
                   "val": {
                     "u32": 0
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "000000000000000000000000000000000000000000000000000000000000000a"
+              },
+              {
+                "symbol": "get_lp_position"
+              }
+            ],
+            "data": {
+              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "000000000000000000000000000000000000000000000000000000000000000a",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "get_lp_position"
+              }
+            ],
+            "data": {
+              "map": [
+                {
+                  "key": {
+                    "symbol": "deposit_count"
+                  },
+                  "val": {
+                    "u32": 1
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "shares"
+                  },
+                  "val": {
+                    "u128": {
+                      "hi": 0,
+                      "lo": 100000000000
+                    }
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "usdc_value"
+                  },
+                  "val": {
+                    "u128": {
+                      "hi": 0,
+                      "lo": 100200000000
+                    }
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "yield_earned"
+                  },
+                  "val": {
+                    "u128": {
+                      "hi": 0,
+                      "lo": 0
+                    }
                   }
                 }
               ]
