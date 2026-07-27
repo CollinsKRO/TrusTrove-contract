@@ -45,6 +45,15 @@ TrusTrove is a decentralized trade finance protocol on Stellar. SMEs tokenize un
 
 Join the contributor community: **[t.me/trusttrove](https://t.me/trusttrove)**
 
+### Maintainer Tooling
+
+Seed-issue generator scripts live in [`scripts/maintainer/`](./scripts/maintainer/):
+
+- `create_issues.py` — generate issues from a template
+- `create-contract-issues.sh` / `create-contract-issues.ps1` — shell/PowerShell helpers
+
+Run any script from the repo root, e.g. `bash scripts/maintainer/create-contract-issues.sh`.
+
 ---
 
 ## Contracts
@@ -229,6 +238,8 @@ Invoice status: → Defaulted
 - `receive_repayment` in the pool is callable only by the registered `invoice_contract`.
 - Every state transition in `invoice_contract` is guarded by an explicit status check; no skipping steps.
 
+> **Detailed references:** [Threat Model](./docs/THREAT_MODEL.md) · [Storage Schema](./docs/STORAGE.md) · [Limitations](./docs/LIMITATIONS.md)
+
 ---
 
 ## Deployed Contracts (Stellar Testnet)
@@ -289,6 +300,13 @@ bash scripts/setup-testnet.sh
 bash scripts/deploy.sh
 ```
 
+Or on Windows (PowerShell):
+
+```powershell
+./scripts/setup-testnet.ps1
+./scripts/deploy.ps1
+```
+
 The deploy script prints all four contract IDs at the end. Paste them into `TrusTrove-app/.env.local`.
 
 #### Stellar CLI Setup (Linux, macOS, Windows)
@@ -296,7 +314,11 @@ The deploy script prints all four contract IDs at the end. Paste them into `Trus
 The deploy script requires the Stellar CLI. Choose one:
 
 - **Linux/macOS:** Install globally per [Stellar docs](https://developers.stellar.org/docs/learn/developing-with-soroban/setup) — the script will find it on `PATH`.
-- **Windows (native):** Install to `Program Files (x86)/Stellar CLI/`, or set `STELLAR_BIN=/path/to/stellar.exe` before running the script.
+- **Windows (native):** Use the PowerShell scripts (`scripts/setup-testnet.ps1` and `scripts/deploy.ps1`). Install the Stellar CLI to `Program Files (x86)\Stellar CLI\`, or set `STELLAR_BIN` environment variable. Run from PowerShell:
+  ```powershell
+  powershell ./scripts/setup-testnet.ps1
+  powershell ./scripts/deploy.ps1
+  ```
 - **Windows (WSL):** Install Stellar CLI in your WSL environment, or install on Windows host and set `STELLAR_BIN` to the Windows path (e.g., `/mnt/c/Program Files (x86)/Stellar CLI/stellar.exe`).
 
 ---
@@ -357,6 +379,14 @@ Issues are labeled by contract and complexity:
 - `complexity:low` — isolated function or test, good entry point
 - `complexity:medium` — touches contract logic and storage
 - `complexity:high` — cross-contract interactions or new mechanics
+
+### Architecture Docs
+
+Detailed references for contributors and integrators:
+
+- [Threat Model](./docs/THREAT_MODEL.md) — trust assumptions, auth gates, attack vectors
+- [Storage Schema](./docs/STORAGE.md) — on-chain data layout, TTL patterns, gas estimates
+- [Limitations](./docs/LIMITATIONS.md) — testnet constraints, known gaps, unhandled edge cases
 
 ### Key conventions
 
