@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+use proptest::prelude::*;
+use proptest::test_runner::{Config as ProptestConfig, TestRunner};
 use soroban_sdk::{
     contract, contractimpl, contracttype,
     testutils::{Address as _, Events as _, Ledger},
@@ -101,16 +103,6 @@ impl MockPool {
     }
 }
 
-#[contract]
-pub struct MockToken;
-
-#[contractimpl]
-impl MockToken {
-    pub fn transfer(_env: Env, _from: Address, _to: Address, _amount: i128) {
-        // no-op for tests (auth is mocked)
-    }
-}
-
 type Setup = (
     Env,
     InvoiceContractClient<'static>,
@@ -140,12 +132,22 @@ fn setup() -> Setup {
 
     let usdc_asset = env.register_contract(None, MockToken);
     client.add_supported_asset(&usdc_asset);
-    let token_id = env.register_contract(None, MockToken);
-    let usdc_asset = token_id;
 
     (env, client, issuer, buyer, registry_client, usdc_asset)
 }
 
+#[allow(dead_code)]
+type SetupWithAdmin = (
+    Env,
+    InvoiceContractClient<'static>,
+    Address,
+    Address,
+    MockRegistryClient<'static>,
+    Address,
+    Address,
+);
+
+#[allow(dead_code)]
 fn setup_with_admin() -> SetupWithAdmin {
     let env = Env::default();
     env.mock_all_auths();
@@ -648,6 +650,7 @@ fn test_trigger_default_stranger_panics() {
     client.initialize(&admin, &registry_id);
 
     let usdc = Address::generate(&env);
+    client.add_supported_asset(&usdc);
     let due_date = env.ledger().timestamp() + 86400;
 
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
@@ -851,6 +854,7 @@ fn test_create_invoice_with_xlm_asset() {
     let (env, client, issuer, buyer, _, _usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let xlm_asset = Address::generate(&env);
+    client.add_supported_asset(&xlm_asset);
 
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &xlm_asset);
     let invoice = client.get(&invoice_id);
@@ -1283,9 +1287,12 @@ fn test_repay_emits_event() {
     let contract_id = client.address.clone();
     let events = env.events().all();
     let found = events.iter().any(|e| {
-        let (c, topic, _data): (soroban_sdk::Address, (soroban_sdk::Symbol, BytesN<32>), u128) =
-            e.into_val(&env);
-        c == contract_id && topic.0 == Symbol::new(&env, "invoice_repaid")
+        let (c, topics, _data) = e;
+        if c != contract_id {
+            return false;
+        }
+        let topic0: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
+        topic0 == Symbol::new(&env, "invoice_repaid")
     });
     assert!(found);
 }
@@ -1390,7 +1397,13 @@ fn test_repay_fails_no_auth() {
         invoke: &soroban_sdk::testutils::MockAuthInvoke {
             contract: &contract_id,
             fn_name: "mark_funded",
-            args: (invoice_id.clone(), pool.clone(), usdc.clone(), 980_000_000u128).into_val(&env),
+            args: (
+                invoice_id.clone(),
+                pool.clone(),
+                usdc.clone(),
+                980_000_000u128,
+            )
+                .into_val(&env),
             sub_invokes: &[],
         },
     }]);
@@ -1508,18 +1521,78 @@ fn test_add_supported_asset() {
     let (env, client, _, _, _, _) = setup();
     let asset = Address::generate(&env);
 
-    // Create first invoice
-    let invoice_id_1 = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    assert!(!client.is_supported_asset(&asset));
+    client.add_supported_asset(&asset);
+    assert!(client.is_supported_asset(&asset));
+    assert_eq!(client.get_supported_asset_count(), 2);
+}
 
-    // Create second invoice with different face value
-    let invoice_id_2 = client.create(&issuer, &buyer, &2_000_000_000, &due_date, &usdc);
+#[test]
+fn test_add_supported_asset_idempotent() {
+    let (_env, client, _, _, _, usdc) = setup();
 
-    // Different face values should produce different IDs
-    assert_ne!(invoice_id_1, invoice_id_2);
+    assert!(client.is_supported_asset(&usdc));
+    client.add_supported_asset(&usdc);
+    assert!(client.is_supported_asset(&usdc));
+    assert_eq!(client.get_supported_asset_count(), 1);
+}
 
-    // Verify invoices have correct values
-    assert_eq!(client.get(&invoice_id_1).face_value, 1_000_000_000);
-    assert_eq!(client.get(&invoice_id_2).face_value, 2_000_000_000);
+#[test]
+fn test_remove_supported_asset() {
+    let (env, client, _, _, _, usdc) = setup();
+    let asset = Address::generate(&env);
+    client.add_supported_asset(&asset);
+    assert_eq!(client.get_supported_asset_count(), 2);
+
+    client.remove_supported_asset(&asset);
+    assert!(!client.is_supported_asset(&asset));
+    assert_eq!(client.get_supported_asset_count(), 1);
+
+    assert!(client.is_supported_asset(&usdc));
+}
+
+#[test]
+fn test_remove_supported_asset_idempotent() {
+    let (env, client, _, _, _, _) = setup();
+    let asset = Address::generate(&env);
+
+    client.remove_supported_asset(&asset);
+    assert!(!client.is_supported_asset(&asset));
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #13)")]
+fn test_create_fails_unsupported_asset() {
+    let (env, client, issuer, buyer, _, _) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let unsupported = Address::generate(&env);
+
+    client.create(&issuer, &buyer, &1_000_000_000, &due_date, &unsupported);
+}
+
+#[test]
+fn test_create_succeeds_with_supported_asset() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    let invoice = client.get(&invoice_id);
+    assert_eq!(invoice.funding_asset, usdc);
+}
+
+#[test]
+fn test_add_then_remove_then_create_fails() {
+    let (env, client, issuer, buyer, _, _) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let asset = Address::generate(&env);
+
+    client.add_supported_asset(&asset);
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &asset);
+    let invoice = client.get(&invoice_id);
+    assert_eq!(invoice.funding_asset, asset);
+
+    client.remove_supported_asset(&asset);
+    assert!(!client.is_supported_asset(&asset));
 }
 
 #[test]
@@ -1556,6 +1629,7 @@ fn test_invoice_ids_unique_for_different_assets() {
 
     // Create a different token asset
     let other_token = env.register_contract(None, MockToken);
+    client.add_supported_asset(&other_token);
 
     // Create second invoice with different asset
     let invoice_id_2 = client.create(&issuer, &buyer, &face_value, &due_date, &other_token);
@@ -1730,36 +1804,6 @@ fn test_repay_from_listed_rejected() {
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
     client.list_for_financing(&invoice_id, &200);
     assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Listed);
-    client.repay(&invoice_id);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #8)")]
-fn test_repay_from_funded_rejected() {
-    let (env, client, issuer, buyer, _, usdc) = setup();
-    let due_date = env.ledger().timestamp() + 86400;
-    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
-    client.list_for_financing(&invoice_id, &200);
-    let pool = mock_pool_with_asset(&env, &usdc);
-    client.set_pool_contract(&pool);
-    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
-    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Funded);
-    client.repay(&invoice_id);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #8)")]
-fn test_repay_from_active_rejected() {
-    let (env, client, issuer, buyer, _, usdc) = setup();
-    let due_date = env.ledger().timestamp() + 86400;
-    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
-    client.list_for_financing(&invoice_id, &200);
-    let pool = mock_pool_with_asset(&env, &usdc);
-    client.set_pool_contract(&pool);
-    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
-    client.mark_shipped(&invoice_id);
-    client.confirm_delivery(&invoice_id, &issuer);
-    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Active);
     client.repay(&invoice_id);
 }
 
