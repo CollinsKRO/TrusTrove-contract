@@ -215,11 +215,7 @@ fn test_double_initialize_panics() {
 
     // Verify admin and registry were stored correctly
     env.as_contract(&contract_id, || {
-        let stored_admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .unwrap();
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
         assert_eq!(stored_admin, admin);
         let stored_registry: Address = env
             .storage()
@@ -1621,8 +1617,11 @@ fn test_repay_emits_event() {
     let contract_id = client.address.clone();
     let events = env.events().all();
     let found = events.iter().any(|e| {
-        let (c, topic, _data): (soroban_sdk::Address, (soroban_sdk::Symbol, BytesN<32>), u128) =
-            e.into_val(&env);
+        let (c, topic, _data): (
+            soroban_sdk::Address,
+            (soroban_sdk::Symbol, BytesN<32>),
+            u128,
+        ) = e.into_val(&env);
         c == contract_id && topic.0 == Symbol::new(&env, "invoice_repaid")
     });
     assert!(found);
@@ -1728,7 +1727,13 @@ fn test_repay_fails_no_auth() {
         invoke: &soroban_sdk::testutils::MockAuthInvoke {
             contract: &contract_id,
             fn_name: "mark_funded",
-            args: (invoice_id.clone(), pool.clone(), usdc.clone(), 980_000_000u128).into_val(&env),
+            args: (
+                invoice_id.clone(),
+                pool.clone(),
+                usdc.clone(),
+                980_000_000u128,
+            )
+                .into_val(&env),
             sub_invokes: &[],
         },
     }]);
