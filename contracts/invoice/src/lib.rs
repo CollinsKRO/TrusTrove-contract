@@ -594,12 +594,7 @@ impl InvoiceContract {
         Self::save_invoice(&env, inv_key, &updated);
         Self::extend_instance_ttl(&env);
 
-        move_status_index(
-            &env,
-            &invoice_id,
-            InvoiceStatus::Confirmed,
-            InvoiceStatus::Repaid,
-        );
+        move_status_index(&env, &invoice_id, prev_status, InvoiceStatus::Repaid);
         events::invoice_repaid(&env, &invoice_id, updated.face_value);
         true
     }
@@ -667,7 +662,12 @@ impl InvoiceContract {
         Self::save_invoice(&env, inv_key, &updated);
         Self::extend_instance_ttl(&env);
 
-        self::move_status_index(&env, &invoice_id, prev_status, InvoiceStatus::Repaid);
+        move_status_index(
+            &env,
+            &invoice_id,
+            InvoiceStatus::Confirmed,
+            InvoiceStatus::Repaid,
+        );
         events::invoice_repaid(&env, &invoice_id, updated.face_value);
         true
     }

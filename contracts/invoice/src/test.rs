@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+use proptest::prelude::*;
+use proptest::test_runner::{Config as ProptestConfig, TestRunner};
 use soroban_sdk::{
     contract, contractimpl, contracttype,
     testutils::{Address as _, Events as _, Ledger},
@@ -101,22 +103,23 @@ impl MockPool {
     }
 }
 
-#[contract]
-pub struct MockToken;
-
-#[contractimpl]
-impl MockToken {
-    pub fn transfer(_env: Env, _from: Address, _to: Address, _amount: i128) {
-        // no-op for tests (auth is mocked)
-    }
-}
-
 type Setup = (
     Env,
     InvoiceContractClient<'static>,
     Address,
     Address,
     MockRegistryClient<'static>,
+    Address,
+);
+
+#[allow(dead_code)]
+type SetupWithAdmin = (
+    Env,
+    InvoiceContractClient<'static>,
+    Address,
+    Address,
+    MockRegistryClient<'static>,
+    Address,
     Address,
 );
 
@@ -139,13 +142,11 @@ fn setup() -> Setup {
     client.initialize(&admin, &registry_id);
 
     let usdc_asset = env.register_contract(None, MockToken);
-    client.add_supported_asset(&usdc_asset);
-    let token_id = env.register_contract(None, MockToken);
-    let usdc_asset = token_id;
 
     (env, client, issuer, buyer, registry_client, usdc_asset)
 }
 
+#[allow(dead_code)]
 fn setup_with_admin() -> SetupWithAdmin {
     let env = Env::default();
     env.mock_all_auths();
@@ -165,7 +166,6 @@ fn setup_with_admin() -> SetupWithAdmin {
     client.initialize(&admin, &registry_id);
 
     let usdc_asset = env.register_contract(None, MockToken);
-    client.add_supported_asset(&usdc_asset);
 
     (
         env,
@@ -1564,7 +1564,6 @@ fn test_repay_fails_no_auth() {
     client.initialize(&admin, &registry_id);
 
     let usdc = Address::generate(&env);
-    client.add_supported_asset(&usdc);
     let due_date = env.ledger().timestamp() + 86400;
 
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
@@ -1728,27 +1727,6 @@ fn prop_expiry_window_bounds_are_respected_across_values() {
             Ok(())
         })
         .unwrap();
-}
-
-// ============== SUPPORTED ASSET TESTS ==============
-
-#[test]
-fn test_add_supported_asset() {
-    let (env, client, _, _, _, _) = setup();
-    let asset = Address::generate(&env);
-
-    // Create first invoice
-    let invoice_id_1 = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
-
-    // Create second invoice with different face value
-    let invoice_id_2 = client.create(&issuer, &buyer, &2_000_000_000, &due_date, &usdc);
-
-    // Different face values should produce different IDs
-    assert_ne!(invoice_id_1, invoice_id_2);
-
-    // Verify invoices have correct values
-    assert_eq!(client.get(&invoice_id_1).face_value, 1_000_000_000);
-    assert_eq!(client.get(&invoice_id_2).face_value, 2_000_000_000);
 }
 
 #[test]
@@ -1959,36 +1937,6 @@ fn test_repay_from_listed_rejected() {
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
     client.list_for_financing(&invoice_id, &200);
     assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Listed);
-    client.repay(&invoice_id);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #8)")]
-fn test_repay_from_funded_rejected() {
-    let (env, client, issuer, buyer, _, usdc) = setup();
-    let due_date = env.ledger().timestamp() + 86400;
-    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
-    client.list_for_financing(&invoice_id, &200);
-    let pool = mock_pool_with_asset(&env, &usdc);
-    client.set_pool_contract(&pool);
-    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
-    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Funded);
-    client.repay(&invoice_id);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #8)")]
-fn test_repay_from_active_rejected() {
-    let (env, client, issuer, buyer, _, usdc) = setup();
-    let due_date = env.ledger().timestamp() + 86400;
-    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
-    client.list_for_financing(&invoice_id, &200);
-    let pool = mock_pool_with_asset(&env, &usdc);
-    client.set_pool_contract(&pool);
-    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
-    client.mark_shipped(&invoice_id);
-    client.confirm_delivery(&invoice_id, &issuer);
-    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Active);
     client.repay(&invoice_id);
 }
 
