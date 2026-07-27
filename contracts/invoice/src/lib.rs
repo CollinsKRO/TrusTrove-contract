@@ -27,6 +27,13 @@ mod storage {
 /// this value.
 pub const MAX_FACE_VALUE: u128 = u128::MAX / 10_000;
 
+/// Maximum allowed invoice lifetime in seconds.
+///
+/// This caps `due_date` to `now + MAX_INVOICE_LIFETIME_SECONDS` to reject
+/// far-future due dates that are effectively garbage data (e.g., centuries
+/// in the future). The value is ~10 years (10 * 365 * 24 * 60 * 60).
+pub const MAX_INVOICE_LIFETIME_SECONDS: u64 = 10 * 365 * 24 * 60 * 60;
+
 #[contract]
 pub struct InvoiceContract;
 
@@ -131,6 +138,8 @@ impl InvoiceContract {
     ///   so `due_date == now` is rejected. Pinning tests:
     ///   `test_create_fails_when_due_date_equals_now` and
     ///   `test_create_succeeds_when_due_date_one_second_in_future`.
+    /// * `InvoiceError::InvalidDueDateTooFar` if `due_date` exceeds
+    ///   `now + MAX_INVOICE_LIFETIME_SECONDS` (~10 years).
     /// * `InvoiceError::CounterOverflow` if the internal invoice counter overflows.
     ///
     /// # Returns
@@ -178,7 +187,14 @@ impl InvoiceContract {
         if face_value > MAX_FACE_VALUE {
             panic_with_error!(&env, InvoiceError::InvalidAmount);
         }
-        if due_date <= env.ledger().timestamp() {
+        let now = env.ledger().timestamp();
+        if due_date <= now {
+            panic_with_error!(&env, InvoiceError::InvalidDueDate);
+        }
+        let max_due_date = now
+            .checked_add(MAX_INVOICE_LIFETIME_SECONDS)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::MathOverflow));
+        if due_date > max_due_date {
             panic_with_error!(&env, InvoiceError::InvalidDueDate);
         }
 

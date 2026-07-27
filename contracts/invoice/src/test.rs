@@ -243,6 +243,44 @@ fn test_create_succeeds_when_due_date_one_second_in_future() {
     assert_eq!(events.len(), 2);
 }
 
+// ============== ISSUE #226: due_date UPPER BOUND (far future) ==============
+//
+// The upper bound is MAX_INVOICE_LIFETIME_SECONDS (10 years).
+// At exactly `due_date == now + MAX_INVOICE_LIFETIME_SECONDS`, create succeeds.
+// At `due_date == now + MAX_INVOICE_LIFETIME_SECONDS + 1`, create fails with
+// InvalidDueDate (#7). These tests pin both boundaries so regressions can't land silently.
+
+const MAX_INVOICE_LIFETIME_SECONDS: u64 = 10 * 365 * 24 * 60 * 60; // 10 years
+
+#[test]
+fn test_create_succeeds_at_max_due_date_boundary() {
+    // Positive boundary: due_date == now + MAX_INVOICE_LIFETIME_SECONDS is allowed.
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    env.ledger().set_timestamp(86400);
+    let max_due_date = env.ledger().timestamp() + MAX_INVOICE_LIFETIME_SECONDS;
+    let face_value: u128 = 1_000_000_000;
+
+    let invoice_id = client.create(&issuer, &buyer, &face_value, &max_due_date, &usdc);
+
+    let invoice = client.get(&invoice_id);
+    assert_eq!(invoice.status, InvoiceStatus::Created);
+    assert_eq!(invoice.due_date, max_due_date);
+    assert_eq!(invoice.created_at, env.ledger().timestamp());
+    assert_eq!(invoice.face_value, face_value);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #7)")]
+fn test_create_fails_above_max_due_date_boundary() {
+    // Negative boundary: due_date == now + MAX_INVOICE_LIFETIME_SECONDS + 1 is rejected.
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    env.ledger().set_timestamp(86400);
+    let above_max_due_date = env.ledger().timestamp() + MAX_INVOICE_LIFETIME_SECONDS + 1;
+    let face_value: u128 = 1_000_000_000;
+
+    client.create(&issuer, &buyer, &face_value, &above_max_due_date, &usdc);
+}
+
 #[test]
 fn test_list_for_financing() {
     let (env, client, issuer, buyer, _, usdc) = setup();
