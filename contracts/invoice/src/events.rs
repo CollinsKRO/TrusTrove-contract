@@ -100,3 +100,14 @@ pub fn ownership_transferred(env: &Env, from: &Address, to: &Address) {
         (),
     );
 }
+
+pub fn contract_initialized(env: &Env, admin: &Address, registry_contract: &Address) {
+    env.events().publish(
+        (
+            Symbol::new(env, "contract_initialized"),
+            admin.clone(),
+            registry_contract.clone(),
+        ),
+        (),
+    );
+}

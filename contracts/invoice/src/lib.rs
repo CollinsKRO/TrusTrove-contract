@@ -72,6 +72,7 @@ impl InvoiceContract {
             .set(&DataKey::RegistryContract, &registry_contract);
         env.storage().instance().set(&DataKey::Counter, &0u64);
         Self::extend_instance_ttl(&env);
+        events::contract_initialized(&env, &admin, &registry_contract);
     }
 
     /// Sets the pool contract address used by this invoice contract.

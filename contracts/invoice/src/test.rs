@@ -119,6 +119,54 @@ fn mock_pool_with_asset(env: &Env, asset: &Address) -> Address {
 }
 
 #[test]
+fn test_initialize_emits_contract_initialized_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let registry_id = env.register_contract(None, MockRegistry);
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &registry_id);
+
+    let contract_id = client.address.clone();
+    let events = env.events().all();
+    assert_eq!(
+        events,
+        vec![
+            &env,
+            (
+                contract_id,
+                (
+                    Symbol::new(&env, "contract_initialized"),
+                    admin.clone(),
+                    registry_id.clone()
+                )
+                    .into_val(&env),
+                ().into_val(&env),
+            )
+        ]
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn test_initialize_fails_when_already_initialized() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let registry_id = env.register_contract(None, MockRegistry);
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &registry_id);
+    // Second initialize should panic with AlreadyInitialized (#1)
+    client.initialize(&admin, &registry_id);
+}
+
+#[test]
 fn test_create_invoice_with_verified_parties() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let face_value: u128 = 1_000_000_000;
@@ -189,15 +237,10 @@ fn test_create_succeeds_when_due_date_one_second_in_future() {
     assert_eq!(invoice.created_at, env.ledger().timestamp());
     assert_eq!(invoice.face_value, face_value);
 
-    // Events: exactly one invoice_created event was emitted by the invoice
-    // contract. Per `events::invoice_created` the topic tuple is
-    // `(Symbol("invoice_created"), invoice_id, issuer, buyer, funding_asset)`
-    // and the data payload is `face_value: u128`. We pin the count and event
-    // shape here; detailed per-topic comparisons live in the dedicated event
-    // integration tests because soroban_sdk's `Val` does not implement
-    // `PartialEq` for ad-hoc equality assertions.
+    // Events: setup() calls initialize() which emits contract_initialized,
+    // then create() emits invoice_created. We expect 2 events total.
     let events = env.events().all();
-    assert_eq!(events.len(), 1);
+    assert_eq!(events.len(), 2);
 }
 
 #[test]
@@ -990,18 +1033,14 @@ fn test_set_pool_contract_emits_event() {
 
     client.set_pool_contract(&pool);
 
-    let contract_id = client.address.clone();
+    let _contract_id = client.address.clone();
     let events = env.events().all();
+    // setup() emits contract_initialized, then set_pool_contract emits pool_contract_set
+    assert_eq!(events.len(), 2);
+    let (_, topics, _) = events.last().expect("expected at least one event");
     assert_eq!(
-        events,
-        vec![
-            &env,
-            (
-                contract_id,
-                (Symbol::new(&env, "pool_contract_set"), pool.clone()).into_val(&env),
-                ().into_val(&env),
-            )
-        ]
+        topics,
+        (Symbol::new(&env, "pool_contract_set"), pool.clone()).into_val(&env)
     );
 }
 
@@ -1012,19 +1051,16 @@ fn test_set_expiry_window_emits_event() {
 
     client.set_expiry_window(&window);
 
-    let contract_id = client.address.clone();
+    let _contract_id = client.address.clone();
     let events = env.events().all();
+    // setup() emits contract_initialized, then set_expiry_window emits expiry_window_set
+    assert_eq!(events.len(), 2);
+    let (_, topics, data) = events.last().expect("expected at least one event");
     assert_eq!(
-        events,
-        vec![
-            &env,
-            (
-                contract_id,
-                (Symbol::new(&env, "expiry_window_set"),).into_val(&env),
-                window.into_val(&env),
-            )
-        ]
+        topics,
+        (Symbol::new(&env, "expiry_window_set"),).into_val(&env)
     );
+    assert_eq!(u64::try_from_val(&env, &data).unwrap(), window);
 }
 
 #[test]
