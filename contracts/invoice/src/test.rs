@@ -6,7 +6,7 @@ use soroban_sdk::{
     vec, Address, BytesN, Env, IntoVal, Symbol, TryFromVal,
 };
 
-use crate::{DataKey, InvoiceContract, InvoiceContractClient, InvoiceStatus};
+use crate::{InvoiceContract, InvoiceContractClient, InvoiceStatus};
 
 #[contract]
 pub struct MockRegistry;
@@ -218,13 +218,13 @@ fn test_double_initialize_panics() {
         let stored_admin: Address = env
             .storage()
             .instance()
-            .get(&DataKey::Admin)
+            .get(&crate::DataKey::Admin)
             .unwrap();
         assert_eq!(stored_admin, admin);
         let stored_registry: Address = env
             .storage()
             .instance()
-            .get(&DataKey::RegistryContract)
+            .get(&crate::DataKey::RegistryContract)
             .unwrap();
         assert_eq!(stored_registry, registry_id);
     });
@@ -1500,14 +1500,17 @@ fn test_repay_emits_event() {
 
     client.repay(&invoice_id);
 
-    let contract_id = client.address.clone();
+    // Contract events (non-diagnostic) include the repay event
     let events = env.events().all();
-    let found = events.iter().any(|e| {
-        let (c, topic, _data): (soroban_sdk::Address, (soroban_sdk::Symbol, BytesN<32>), u128) =
-            e.into_val(&env);
-        c == contract_id && topic.0 == Symbol::new(&env, "invoice_repaid")
-    });
-    assert!(found);
+    let last_idx = events.len() - 1;
+    let (_contract_id, repay_topics, _data) = events.get(last_idx).unwrap();
+    // Verify the last event is invoice_repaid by comparing the Vec via assert_eq
+    let expected_topics: soroban_sdk::Vec<soroban_sdk::Val> = vec![
+        &env,
+        soroban_sdk::Symbol::new(&env, "invoice_repaid").into_val(&env),
+        invoice_id.into_val(&env),
+    ];
+    assert_eq!(repay_topics, expected_topics);
 }
 
 #[test]
@@ -1610,7 +1613,13 @@ fn test_repay_fails_no_auth() {
         invoke: &soroban_sdk::testutils::MockAuthInvoke {
             contract: &contract_id,
             fn_name: "mark_funded",
-            args: (invoice_id.clone(), pool.clone(), usdc.clone(), 980_000_000u128).into_val(&env),
+            args: (
+                invoice_id.clone(),
+                pool.clone(),
+                usdc.clone(),
+                980_000_000u128,
+            )
+                .into_val(&env),
             sub_invokes: &[],
         },
     }]);
