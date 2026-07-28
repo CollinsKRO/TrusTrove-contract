@@ -352,6 +352,7 @@ impl InvoiceContract {
     /// * `InvoiceError::NotFound` if the invoice cannot be found.
     /// * `InvoiceError::InvalidStatusTransition` if invoice status is not `Listed`.
     /// * `InvoiceError::UnsupportedAsset` if the asset does not match the invoice funding asset.
+    /// * `InvoiceError::InvalidAmount` if `funded_amount` is zero.
     ///
     /// # Returns
     /// * `bool` - `true` when funding is recorded.
@@ -368,6 +369,10 @@ impl InvoiceContract {
         funded_amount: u128,
     ) -> bool {
         pool_address.require_auth();
+
+        if funded_amount == 0 {
+            panic_with_error!(&env, InvoiceError::InvalidAmount);
+        }
 
         let inv_key = DataKey::Invoice(invoice_id.clone());
         let mut invoice: Invoice = env
