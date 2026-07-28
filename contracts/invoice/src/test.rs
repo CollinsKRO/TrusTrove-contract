@@ -468,6 +468,108 @@ fn test_confirm_by_both_transitions_to_confirmed() {
     assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Confirmed);
 }
 
+// Regression test for the event-ordering bug: `both_confirmed` used to be
+// published before the invoice record was persisted (`set`/`extend_ttl`),
+// while `delivery_confirmed` was published after, making the ordering of
+// events relative to state persistence depend on which branch was taken.
+// The fix publishes both events only after all storage writes complete.
+#[test]
+fn test_confirm_delivery_single_confirm_emits_only_delivery_confirmed() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+
+    let events_before = env.events().all().len();
+    client.confirm_delivery(&invoice_id, &issuer);
+
+    // The invoice must already be persisted with issuer_confirmed = true by
+    // the time the event is observed.
+    let invoice = client.get(&invoice_id);
+    assert_eq!(invoice.status, InvoiceStatus::Active);
+    assert!(invoice.issuer_confirmed);
+    assert!(!invoice.buyer_confirmed);
+
+    let events = env.events().all();
+    let new_events = events.slice(events_before..);
+    assert_eq!(
+        new_events.len(),
+        1,
+        "only delivery_confirmed should be emitted when a single party confirms"
+    );
+
+    let (contract_id, topics, _data) = new_events.get(0).expect("expected one event");
+    assert_eq!(contract_id, client.address.clone());
+    assert_eq!(
+        topics,
+        (
+            Symbol::new(&env, "delivery_confirmed"),
+            invoice_id.clone(),
+            issuer.clone()
+        )
+            .into_val(&env)
+    );
+}
+
+#[test]
+fn test_confirm_delivery_dual_confirm_event_order_is_consistent() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
+    client.mark_shipped(&invoice_id);
+    client.confirm_delivery(&invoice_id, &issuer);
+
+    let events_before = env.events().all().len();
+    client.confirm_delivery(&invoice_id, &buyer);
+
+    // Both the status transition and the confirmation flags must already be
+    // persisted by the time these events are observed.
+    let invoice = client.get(&invoice_id);
+    assert_eq!(invoice.status, InvoiceStatus::Confirmed);
+    assert!(invoice.issuer_confirmed);
+    assert!(invoice.buyer_confirmed);
+
+    let events = env.events().all();
+    let new_events = events.slice(events_before..);
+    assert_eq!(
+        new_events.len(),
+        2,
+        "both_confirmed and delivery_confirmed should both be emitted when the second party confirms"
+    );
+
+    let (both_confirmed_contract, both_confirmed_topics, _data) =
+        new_events.get(0).expect("expected both_confirmed event");
+    assert_eq!(both_confirmed_contract, client.address.clone());
+    assert_eq!(
+        both_confirmed_topics,
+        (Symbol::new(&env, "both_confirmed"), invoice_id.clone()).into_val(&env)
+    );
+
+    let (delivery_confirmed_contract, delivery_confirmed_topics, _data) = new_events
+        .get(1)
+        .expect("expected delivery_confirmed event");
+    assert_eq!(delivery_confirmed_contract, client.address.clone());
+    assert_eq!(
+        delivery_confirmed_topics,
+        (
+            Symbol::new(&env, "delivery_confirmed"),
+            invoice_id.clone(),
+            buyer.clone()
+        )
+            .into_val(&env)
+    );
+}
+
 #[test]
 #[should_panic(expected = "Error(Contract, #3)")]
 fn test_confirm_delivery_wrong_party_panics() {
