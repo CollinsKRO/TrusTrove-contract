@@ -1254,6 +1254,118 @@ fn test_multi_lp_proportional_yield_with_mid_cycle_deposit() {
 // and verified through integration tests. Individual contract auth is covered by the
 // fact that mock_all_auths() is used during setup and cleared when specific auths are set.
 
+// ============== ISSUE #274: INSUFFICIENT LIQUIDITY ON WITHDRAW ==============
+
+// LP deposits exactly the amount that will be funded (100% utilization),
+// then tries to withdraw all shares — the pool has zero available liquidity
+// so this must panic with InsufficientLiquidity (#5).
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_withdraw_all_shares_panics_when_insufficient_liquidity_at_full_utilization() {
+    let te = setup();
+
+    // face_value=10_000_000_000, discount_bps=200 → funded_amount=9_800_000_000
+    // Deposit exactly 9.8B so funding uses 100% of available liquidity
+    te.pool.deposit(&te.lp, &9_800_000_000);
+
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+    let _ = te.pool.fund_invoice(&invoice_id);
+
+    // Verify the pool is at 100% utilization (no available liquidity)
+    let stats = te.pool.get_stats();
+    assert_eq!(
+        stats.available_liquidity, 0,
+        "pool should have zero available liquidity"
+    );
+    assert_eq!(stats.total_funded, 9_800_000_000);
+    assert_eq!(stats.total_deposits, 9_800_000_000);
+
+    // Attempt to withdraw all 9.8B shares when available = 0 → InsufficientLiquidity
+    te.pool.withdraw(&te.lp, &9_800_000_000);
+}
+
+// LP deposits more than the funded amount, so some liquidity remains available.
+// A partial withdraw within that available liquidity succeeds.
+#[test]
+fn test_partial_withdraw_succeeds_within_available_liquidity() {
+    let te = setup();
+
+    // face_value=10_000_000_000, discount_bps=200 → funded_amount=9_800_000_000
+    // Deposit 15B so 5.2B remains available after funding
+    te.pool.deposit(&te.lp, &15_000_000_000);
+
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+    let _ = te.pool.fund_invoice(&invoice_id);
+
+    // Verify available liquidity
+    let stats = te.pool.get_stats();
+    assert_eq!(stats.available_liquidity, 5_200_000_000);
+    assert_eq!(stats.total_funded, 9_800_000_000);
+
+    // Partial withdraw of exactly the available amount should succeed
+    let returned = te.pool.withdraw(&te.lp, &5_200_000_000);
+    assert_eq!(returned, 5_200_000_000);
+
+    // Verify pool state after partial withdraw
+    let stats_after = te.pool.get_stats();
+    assert_eq!(stats_after.total_deposits, 9_800_000_000);
+    assert_eq!(stats_after.total_shares, 9_800_000_000);
+    assert_eq!(stats_after.available_liquidity, 0);
+
+    // Verify LP position updated correctly
+    let pos = te.pool.get_lp_position(&te.lp);
+    assert_eq!(pos.shares, 9_800_000_000);
+    assert_eq!(pos.usdc_value, 9_800_000_000);
+
+    // Verify events
+    // Event payload: (usdc_amount, shares_burned)
+    let events = te.env.events().all();
+    let (contract, topics, data) = events.get(events.len() - 1).unwrap();
+    assert_eq!(contract, te.pool_id);
+    assert_eq!(
+        Symbol::try_from_val(&te.env, &topics.get(0).unwrap()).unwrap(),
+        Symbol::new(&te.env, "lp_withdrawn")
+    );
+    assert_eq!(
+        Address::try_from_val(&te.env, &topics.get(1).unwrap()).unwrap(),
+        te.lp
+    );
+    assert_eq!(
+        <(u128, u128)>::try_from_val(&te.env, &data).unwrap(),
+        (5_200_000_000, 5_200_000_000u128)
+    );
+}
+
+// LP deposits more than the funded amount and withdraws less than the available
+// liquidity — verifies that the LP can withdraw a portion while leaving some
+// liquidity in the pool for other operations.
+#[test]
+fn test_partial_withdraw_leaves_remaining_liquidity() {
+    let te = setup();
+
+    // Deposit 20B, funding uses 9.8B → 10.2B available
+    te.pool.deposit(&te.lp, &20_000_000_000);
+
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+    let _ = te.pool.fund_invoice(&invoice_id);
+
+    let stats = te.pool.get_stats();
+    assert_eq!(stats.available_liquidity, 10_200_000_000);
+
+    // Partial withdraw 5B out of 10.2B available
+    let returned = te.pool.withdraw(&te.lp, &5_000_000_000);
+    assert_eq!(returned, 5_000_000_000);
+
+    // Remaining liquidity should be 5.2B (10.2B - 5B)
+    let stats_after = te.pool.get_stats();
+    assert_eq!(stats_after.available_liquidity, 5_200_000_000);
+    assert_eq!(stats_after.total_deposits, 15_000_000_000);
+    assert_eq!(stats_after.total_shares, 15_000_000_000);
+
+    let pos = te.pool.get_lp_position(&te.lp);
+    assert_eq!(pos.shares, 15_000_000_000);
+}
+
 // ============== ISSUE #268: WITHDRAW AFTER REPAYMENT (SHARE PRICE > 1) ==============
 
 // Covers the "yield grows share price" invariant end-to-end: deposit, fund,
