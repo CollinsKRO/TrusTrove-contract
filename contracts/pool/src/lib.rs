@@ -150,6 +150,9 @@ impl PoolContract {
     /// let shares = client.deposit(&lp, 1_000);
     /// ```
     pub fn deposit(env: Env, lp: Address, usdc_amount: u128) -> u128 {
+        if !env.storage().instance().has(&DataKey::Admin) {
+            panic_with_error!(&env, PoolError::NotInitialized);
+        }
         lp.require_auth();
         if usdc_amount == 0 {
             panic_with_error!(&env, PoolError::InvalidAmount);
@@ -247,6 +250,9 @@ impl PoolContract {
     /// let returned = client.withdraw(&lp, 500);
     /// ```
     pub fn withdraw(env: Env, lp: Address, shares: u128) -> u128 {
+        if !env.storage().instance().has(&DataKey::Admin) {
+            panic_with_error!(&env, PoolError::NotInitialized);
+        }
         lp.require_auth();
         if shares == 0 {
             panic_with_error!(&env, PoolError::InvalidAmount);

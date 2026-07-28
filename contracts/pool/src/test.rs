@@ -2,8 +2,10 @@
 
 use soroban_sdk::{
     contract, contractimpl, contracttype,
-    testutils::{storage::Instance as _, Address as _, Events as _, Ledger},
-    Address, BytesN, Env, Symbol, TryFromVal,
+    testutils::{
+        storage::Instance as _, Address as _, Events as _, Ledger, MockAuth, MockAuthInvoke,
+    },
+    Address, BytesN, Env, IntoVal, Symbol, TryFromVal,
 };
 
 use crate::{DataKey, PoolContract, PoolContractClient};
@@ -1578,4 +1580,144 @@ fn test_deposit_extends_instance_ttl_when_below_threshold() {
         ttl_after >= 1_999_000,
         "instance ttl should be extended close to EXTEND_TO, got {ttl_after}"
     );
+}
+
+// ============== ISSUE #273: INITIALIZATION & AUTH REGRESSION COVERAGE ==============
+
+#[test]
+#[should_panic(expected = "Error(Contract, #1)")]
+fn test_double_initialize_panics() {
+    let env = Env::default();
+
+    let admin = Address::generate(&env);
+    let registry_id = env.register_contract(None, MockRegistry);
+    let invoice_id = env.register_contract(None, RealInvoice);
+    let escrow_id = env.register_contract(None, RealEscrow);
+    let usdc_id = env.register_contract(None, MockToken);
+    let pool_id = env.register_contract(None, PoolContract);
+    let pool = PoolContractClient::new(&env, &pool_id);
+
+    // Initialize invoice with explicit auth
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &invoice_id,
+            fn_name: "initialize",
+            args: (admin.clone(), registry_id.clone()).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    RealInvoiceClient::new(&env, &invoice_id).initialize(&admin, &registry_id);
+
+    // Initialize escrow with explicit auth
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &escrow_id,
+            fn_name: "initialize",
+            args: (
+                admin.clone(),
+                pool_id.clone(),
+                invoice_id.clone(),
+                usdc_id.clone(),
+            )
+                .into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &invoice_id, &usdc_id);
+
+    // First pool initialize — succeeds with explicit auth
+    env.mock_auths(&[MockAuth {
+        address: &admin,
+        invoke: &MockAuthInvoke {
+            contract: &pool_id,
+            fn_name: "initialize",
+            args: (
+                admin.clone(),
+                invoice_id.clone(),
+                escrow_id.clone(),
+                usdc_id.clone(),
+            )
+                .into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id);
+
+    // Verify storage state after first initialize
+    env.as_contract(&pool_id, || {
+        let stored_admin: Address = env.storage().instance().get(&DataKey::Admin).unwrap();
+        assert_eq!(stored_admin, admin);
+        let stored_invoice: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::InvoiceContract)
+            .unwrap();
+        assert_eq!(stored_invoice, invoice_id);
+        let stored_escrow: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::EscrowContract)
+            .unwrap();
+        assert_eq!(stored_escrow, escrow_id);
+        let stored_usdc: Address = env.storage().instance().get(&DataKey::UsdcAsset).unwrap();
+        assert_eq!(stored_usdc, usdc_id);
+    });
+
+    // Second initialize — panics with AlreadyInitialized (#1)
+    pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_deposit_before_initialize_panics() {
+    let env = Env::default();
+
+    let usdc_id = env.register_contract(None, MockToken);
+    let pool_id = env.register_contract(None, PoolContract);
+    let pool = PoolContractClient::new(&env, &pool_id);
+    let lp = Address::generate(&env);
+
+    // Give LP a balance in the mock USDC token
+    let lp_bal_key = TKey(lp.clone());
+    env.as_contract(&usdc_id, || {
+        env.storage()
+            .persistent()
+            .set(&lp_bal_key, &100_000_000_000_000i128);
+    });
+
+    // Mock LP auth but pool is not initialized → should panic with NotInitialized (#2)
+    env.mock_auths(&[MockAuth {
+        address: &lp,
+        invoke: &MockAuthInvoke {
+            contract: &pool_id,
+            fn_name: "deposit",
+            args: (lp.clone(), 10_000_000_000u128).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    pool.deposit(&lp, &10_000_000_000);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_withdraw_before_initialize_panics() {
+    let env = Env::default();
+
+    let pool_id = env.register_contract(None, PoolContract);
+    let pool = PoolContractClient::new(&env, &pool_id);
+    let lp = Address::generate(&env);
+
+    // Mock LP auth but pool is not initialized → should panic with NotInitialized (#2)
+    env.mock_auths(&[MockAuth {
+        address: &lp,
+        invoke: &MockAuthInvoke {
+            contract: &pool_id,
+            fn_name: "withdraw",
+            args: (lp.clone(), 1_000u128).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+    pool.withdraw(&lp, &1_000);
 }
