@@ -578,6 +578,21 @@ fn test_mark_funded_fails_asset_mismatch() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #16)")]
+fn test_mark_funded_rejects_zero_amount() {
+    // Regression test for issue #194: mark_funded must reject
+    // funded_amount == 0 with InvalidAmount (#16).
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &0);
+}
+
+#[test]
 fn test_mark_funded_succeeds_with_matching_asset() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
