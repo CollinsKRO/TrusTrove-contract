@@ -28,10 +28,7 @@
         }
       ]
     ],
-<<<<<<< HEAD
-=======
     [],
->>>>>>> 87db55d (feat(invoice): emit pool_contract_updated event on set_pool_contract)
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
@@ -322,11 +319,7 @@
       [
         {
           "contract_data": {
-<<<<<<< HEAD
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
-=======
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM",
->>>>>>> 87db55d (feat(invoice): emit pool_contract_updated event on set_pool_contract)
             "key": "ledger_key_contract_instance",
             "durability": "persistent"
           }
@@ -337,11 +330,7 @@
             "data": {
               "contract_data": {
                 "ext": "v0",
-<<<<<<< HEAD
                 "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
-=======
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM",
->>>>>>> 87db55d (feat(invoice): emit pool_contract_updated event on set_pool_contract)
                 "key": "ledger_key_contract_instance",
                 "durability": "persistent",
                 "val": {
@@ -349,9 +338,38 @@
                     "executable": {
                       "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                     },
-<<<<<<< HEAD
                     "storage": null
-=======
+                  }
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          4095
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM",
+            "key": "ledger_key_contract_instance",
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM",
+                "key": "ledger_key_contract_instance",
+                "durability": "persistent",
+                "val": {
+                  "contract_instance": {
+                    "executable": {
+                      "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    },
                     "storage": [
                       {
                         "key": {
@@ -362,7 +380,6 @@
                         }
                       }
                     ]
->>>>>>> 87db55d (feat(invoice): emit pool_contract_updated event on set_pool_contract)
                   }
                 }
               }
@@ -603,14 +620,10 @@
           "v0": {
             "topics": [
               {
-<<<<<<< HEAD
-                "symbol": "pool_contract_set"
-=======
                 "symbol": "pool_contract_updated"
               },
               {
                 "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
->>>>>>> 87db55d (feat(invoice): emit pool_contract_updated event on set_pool_contract)
               },
               {
                 "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
