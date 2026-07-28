@@ -58,25 +58,7 @@ impl RegistryContract {
     /// let result = client.register_issuer(&issuer, &metadata);
     /// ```
     pub fn register_issuer(env: Env, address: Address, metadata: Map<String, String>) -> bool {
-        address.require_auth();
-        if env
-            .storage()
-            .persistent()
-            .has(&DataKey::Profile(address.clone()))
-        {
-            panic_with_error!(&env, RegistryError::AlreadyRegistered);
-        }
-        let profile = Profile {
-            address: address.clone(),
-            role: Role::Issuer,
-            verified: true,
-            registered_at: env.ledger().timestamp(),
-            metadata,
-        };
-        let key = DataKey::Profile(address.clone());
-        persistent_set(&env, &key, &profile);
-        events::issuer_registered(&env, &address);
-        true
+        Self::register(&env, Role::Issuer, address, metadata)
     }
 
     // Returns the list of addresses that were skipped (already registered) so
@@ -139,25 +121,7 @@ impl RegistryContract {
     /// let result = client.register_buyer(&buyer, &metadata);
     /// ```
     pub fn register_buyer(env: Env, address: Address, metadata: Map<String, String>) -> bool {
-        address.require_auth();
-        if env
-            .storage()
-            .persistent()
-            .has(&DataKey::Profile(address.clone()))
-        {
-            panic_with_error!(&env, RegistryError::AlreadyRegistered);
-        }
-        let profile = Profile {
-            address: address.clone(),
-            role: Role::Buyer,
-            verified: true,
-            registered_at: env.ledger().timestamp(),
-            metadata,
-        };
-        let key = DataKey::Profile(address.clone());
-        persistent_set(&env, &key, &profile);
-        events::buyer_registered(&env, &address);
-        true
+        Self::register(&env, Role::Buyer, address, metadata)
     }
 
     /// Updates the metadata for an existing registered profile.
@@ -311,5 +275,30 @@ impl RegistryContract {
 impl RegistryContract {
     fn extend_instance_ttl(env: &Env) {
         env.storage().instance().extend_ttl(100, 2_000_000);
+    }
+
+    fn register(env: &Env, role: Role, address: Address, metadata: Map<String, String>) -> bool {
+        address.require_auth();
+        if env
+            .storage()
+            .persistent()
+            .has(&DataKey::Profile(address.clone()))
+        {
+            panic_with_error!(env, RegistryError::AlreadyRegistered);
+        }
+        let profile = Profile {
+            address: address.clone(),
+            role: role.clone(),
+            verified: true,
+            registered_at: env.ledger().timestamp(),
+            metadata,
+        };
+        let key = DataKey::Profile(address.clone());
+        persistent_set(env, &key, &profile);
+        match role {
+            Role::Issuer => events::issuer_registered(env, &address),
+            Role::Buyer => events::buyer_registered(env, &address),
+        }
+        true
     }
 }
