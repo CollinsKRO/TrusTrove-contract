@@ -13,6 +13,15 @@ use trusttrove_invoice::{
     InvoiceContract as RealInvoice, InvoiceContractClient as RealInvoiceClient,
 };
 
+// Default invoice parameters matching create_and_list() defaults
+// These computed constants eliminate magic numbers in test assertions
+// and make the tests self-correcting when parameters change.
+const DEFAULT_FACE_VALUE: u128 = 10_000_000_000;
+const DEFAULT_DISCOUNT_BPS: u32 = 200;
+const DEFAULT_FUNDED_AMOUNT: u128 =
+    DEFAULT_FACE_VALUE * (10000 - DEFAULT_DISCOUNT_BPS as u128) / 10000;
+const DEFAULT_YIELD_AMOUNT: u128 = DEFAULT_FACE_VALUE * DEFAULT_DISCOUNT_BPS as u128 / 10000;
+
 // --------------- Mock Registry ---------------
 
 #[contract]
@@ -244,7 +253,10 @@ fn test_deposit_rejects_dust_when_zero_shares_after_yield() {
 
     // Share price is now 10.2B / 10B = 1.02
     let stats = te.pool.get_stats();
-    assert_eq!(stats.total_deposits, 10_200_000_000);
+    assert_eq!(
+        stats.total_deposits,
+        DEFAULT_FACE_VALUE + DEFAULT_YIELD_AMOUNT
+    );
     assert_eq!(stats.total_shares, 10_000_000_000);
 
     // 1 * 10B / 10.2B = 0 shares -> must be rejected, not absorbed.
@@ -444,7 +456,7 @@ fn test_fund_invoice_succeeds_for_normal_amount() {
     assert!(result);
 
     let stats = te.pool.get_stats();
-    assert_eq!(stats.total_funded, 9_800_000_000);
+    assert_eq!(stats.total_funded, DEFAULT_FUNDED_AMOUNT);
     assert_eq!(stats.active_invoice_count, 1);
 }
 
@@ -594,7 +606,10 @@ fn test_utilization_rate_calculates_correctly() {
     te.pool.set_max_utilization(&te.admin, &10000);
     let invoice_id = create_and_list(&te, &te.usdc_id);
     let _ = te.pool.fund_invoice(&invoice_id);
-    assert_eq!(te.pool.get_utilization_rate(), 9800);
+    assert_eq!(
+        te.pool.get_utilization_rate(),
+        (DEFAULT_FUNDED_AMOUNT * 10000 / 10_000_000_000) as u32
+    );
 }
 
 // ============== MAX UTILIZATION TESTS ==============
@@ -668,7 +683,7 @@ fn test_fund_invoice_is_permissionless() {
 
     // Verify the invoice was actually funded
     let stats = te.pool.get_stats();
-    assert_eq!(stats.total_funded, 9_800_000_000);
+    assert_eq!(stats.total_funded, DEFAULT_FUNDED_AMOUNT);
     assert_eq!(stats.active_invoice_count, 1);
 }
 
@@ -705,7 +720,7 @@ fn test_yield_increases_share_price_after_repayment() {
 
     let pos = te.pool.get_lp_position(&te.lp);
     assert_eq!(pos.shares, 10_000_000_000);
-    assert_eq!(pos.usdc_value, 10_200_000_000);
+    assert_eq!(pos.usdc_value, DEFAULT_FACE_VALUE + DEFAULT_YIELD_AMOUNT);
 }
 
 #[test]
@@ -723,9 +738,15 @@ fn test_two_lps_receive_proportional_yield() {
     assert_eq!(pos1.shares, 10_000_000_000);
     assert_eq!(pos2.shares, 30_000_000_000);
     // With proportional yield distribution: LP1 gets 25% (10B/40B) of yield
-    assert_eq!(pos1.usdc_value, 10_050_000_000);
+    assert_eq!(
+        pos1.usdc_value,
+        10_000_000_000 + DEFAULT_YIELD_AMOUNT * 10_000_000_000 / (10_000_000_000 + 30_000_000_000)
+    );
     // LP2 gets 75% (30B/40B) of yield
-    assert_eq!(pos2.usdc_value, 30_150_000_000);
+    assert_eq!(
+        pos2.usdc_value,
+        30_000_000_000 + DEFAULT_YIELD_AMOUNT * 30_000_000_000 / (10_000_000_000 + 30_000_000_000)
+    );
 }
 
 #[test]
@@ -744,7 +765,7 @@ fn test_lp_position_reflects_current_share_price() {
     te.invoice.repay(&invoice_id);
 
     let pos = te.pool.get_lp_position(&te.lp);
-    assert_eq!(pos.usdc_value, 10_200_000_000);
+    assert_eq!(pos.usdc_value, DEFAULT_FACE_VALUE + DEFAULT_YIELD_AMOUNT);
     assert_eq!(pos.shares, 10_000_000_000);
 }
 
@@ -784,7 +805,7 @@ fn test_receive_repayment() {
 
     // face_value=10_000_000_000, discount_bps=200
     // funded_amount = 10_000_000_000 * (10000 - 200) / 10000 = 9_800_000_000
-    let yield_amount = 200_000_000;
+    let yield_amount = DEFAULT_YIELD_AMOUNT;
 
     let before = te.pool.get_stats();
     let position_before = te.pool.get_lp_position(&te.lp);
@@ -828,7 +849,8 @@ fn test_receive_repayment_exact_funded_amount_has_no_yield() {
 
     let before = te.pool.get_stats();
     let position_before = te.pool.get_lp_position(&te.lp);
-    te.pool.receive_repayment(&invoice_id, &9_800_000_000);
+    te.pool
+        .receive_repayment(&invoice_id, &DEFAULT_FUNDED_AMOUNT);
 
     let after = te.pool.get_stats();
     let position_after = te.pool.get_lp_position(&te.lp);
@@ -876,7 +898,7 @@ fn test_receive_repayment_active_count_underflow_panics() {
     // counters are kept consistent so the panic lands on ActiveCountUnderflow,
     // not on the u128 underflow in `total_funded - funded_amount`.
     let phantom_id = BytesN::from_array(&te.env, &[0xab; 32]);
-    let funded_amount: u128 = 9_800_000_000;
+    let funded_amount: u128 = DEFAULT_FUNDED_AMOUNT;
     te.env.as_contract(&te.pool_id, || {
         te.env
             .storage()
@@ -902,7 +924,7 @@ fn test_receive_repayment_with_refund_active_count_underflow_panics() {
     te.pool.deposit(&te.lp, &100_000_000_000);
 
     let phantom_id = BytesN::from_array(&te.env, &[0xcd; 32]);
-    let funded_amount: u128 = 9_800_000_000;
+    let funded_amount: u128 = DEFAULT_FUNDED_AMOUNT;
     te.env.as_contract(&te.pool_id, || {
         te.env
             .storage()
@@ -933,7 +955,7 @@ fn test_handle_default_active_count_underflow_panics() {
     te.pool.deposit(&te.lp, &100_000_000_000);
 
     let phantom_id = BytesN::from_array(&te.env, &[0xef; 32]);
-    let funded_amount: u128 = 9_800_000_000;
+    let funded_amount: u128 = DEFAULT_FUNDED_AMOUNT;
     te.env.as_contract(&te.pool_id, || {
         te.env
             .storage()
@@ -966,7 +988,7 @@ fn test_handle_default() {
     te.pool.fund_invoice(&invoice_id);
 
     // funded_amount = 10_000_000_000 * 9800 / 10000 = 9_800_000_000
-    let funded_amount = 9_800_000_000;
+    let funded_amount = DEFAULT_FUNDED_AMOUNT;
 
     let before = te.pool.get_stats();
     let position_before = te.pool.get_lp_position(&te.lp);
@@ -1053,7 +1075,7 @@ fn test_deposit_when_deposits_zero_but_shares_exist() {
 
     // Deposit exact amount needed to fund the standard test invoice
     // (10B face value, 200bps discount = 9.8B funding amount)
-    te.pool.deposit(&te.lp, &9_800_000_000);
+    te.pool.deposit(&te.lp, &DEFAULT_FUNDED_AMOUNT);
 
     let invoice_id = create_and_list(&te, &te.usdc_id);
     te.pool.fund_invoice(&invoice_id);
@@ -1095,7 +1117,7 @@ fn test_deposit_after_default_share_price_recovery() {
     let _ = te.pool.handle_default(&invoice_id);
 
     let stats_after_default = te.pool.get_stats();
-    assert_eq!(stats_after_default.total_deposits, 200_000_000); // 10B - 9.8B
+    assert_eq!(stats_after_default.total_deposits, DEFAULT_YIELD_AMOUNT); // 10B - 9.8B
     assert_eq!(stats_after_default.total_shares, 10_000_000_000); // unchanged
                                                                   // Share price: 200M / 10B = 0.02
 
@@ -1115,14 +1137,17 @@ fn test_deposit_after_default_share_price_recovery() {
     let pos2 = te.pool.get_lp_position(&lp2);
 
     assert_eq!(pos1.shares, 10_000_000_000);
-    assert_eq!(pos1.usdc_value, 200_000_000); // 10B shares * 0.02 per share
+    assert_eq!(pos1.usdc_value, DEFAULT_YIELD_AMOUNT); // 10B shares * 0.02 per share
 
     assert_eq!(pos2.shares, shares2);
     assert_eq!(pos2.usdc_value, 10_000_000_000); // LP2 deposited 10B
 
     // Verify final pool state
     let final_stats = te.pool.get_stats();
-    assert_eq!(final_stats.total_deposits, 10_200_000_000); // 200M + 10B
+    assert_eq!(
+        final_stats.total_deposits,
+        DEFAULT_FACE_VALUE + DEFAULT_YIELD_AMOUNT
+    ); // 200M + 10B
     assert_eq!(final_stats.total_shares, 10_000_000_000 + shares2);
 }
 
@@ -1201,7 +1226,7 @@ fn test_multi_lp_proportional_yield_with_mid_cycle_deposit() {
 
     // Repay the invoice with yield (200M yield on 9.8B funded)
     let face_value = 10_000_000_000;
-    let yield_amount = 200_000_000;
+    let yield_amount = DEFAULT_YIELD_AMOUNT;
     te.pool.receive_repayment(&invoice_id, &face_value);
 
     // Verify yield was added to total_deposits
@@ -1266,7 +1291,7 @@ fn test_withdraw_all_shares_panics_when_insufficient_liquidity_at_full_utilizati
 
     // face_value=10_000_000_000, discount_bps=200 → funded_amount=9_800_000_000
     // Deposit exactly 9.8B so funding uses 100% of available liquidity
-    te.pool.deposit(&te.lp, &9_800_000_000);
+    te.pool.deposit(&te.lp, &DEFAULT_FUNDED_AMOUNT);
 
     let invoice_id = create_and_list(&te, &te.usdc_id);
     let _ = te.pool.fund_invoice(&invoice_id);
@@ -1277,11 +1302,11 @@ fn test_withdraw_all_shares_panics_when_insufficient_liquidity_at_full_utilizati
         stats.available_liquidity, 0,
         "pool should have zero available liquidity"
     );
-    assert_eq!(stats.total_funded, 9_800_000_000);
-    assert_eq!(stats.total_deposits, 9_800_000_000);
+    assert_eq!(stats.total_funded, DEFAULT_FUNDED_AMOUNT);
+    assert_eq!(stats.total_deposits, DEFAULT_FUNDED_AMOUNT);
 
     // Attempt to withdraw all 9.8B shares when available = 0 → InsufficientLiquidity
-    te.pool.withdraw(&te.lp, &9_800_000_000);
+    te.pool.withdraw(&te.lp, &DEFAULT_FUNDED_AMOUNT);
 }
 
 // LP deposits more than the funded amount, so some liquidity remains available.
@@ -1299,23 +1324,24 @@ fn test_partial_withdraw_succeeds_within_available_liquidity() {
 
     // Verify available liquidity
     let stats = te.pool.get_stats();
-    assert_eq!(stats.available_liquidity, 5_200_000_000);
-    assert_eq!(stats.total_funded, 9_800_000_000);
+    let available_liquidity = 15_000_000_000 - DEFAULT_FUNDED_AMOUNT;
+    assert_eq!(stats.available_liquidity, available_liquidity);
+    assert_eq!(stats.total_funded, DEFAULT_FUNDED_AMOUNT);
 
     // Partial withdraw of exactly the available amount should succeed
-    let returned = te.pool.withdraw(&te.lp, &5_200_000_000);
-    assert_eq!(returned, 5_200_000_000);
+    let returned = te.pool.withdraw(&te.lp, &available_liquidity);
+    assert_eq!(returned, available_liquidity);
 
     // Verify pool state after partial withdraw
     let stats_after = te.pool.get_stats();
-    assert_eq!(stats_after.total_deposits, 9_800_000_000);
-    assert_eq!(stats_after.total_shares, 9_800_000_000);
+    assert_eq!(stats_after.total_deposits, DEFAULT_FUNDED_AMOUNT);
+    assert_eq!(stats_after.total_shares, DEFAULT_FUNDED_AMOUNT);
     assert_eq!(stats_after.available_liquidity, 0);
 
     // Verify LP position updated correctly
     let pos = te.pool.get_lp_position(&te.lp);
-    assert_eq!(pos.shares, 9_800_000_000);
-    assert_eq!(pos.usdc_value, 9_800_000_000);
+    assert_eq!(pos.shares, DEFAULT_FUNDED_AMOUNT);
+    assert_eq!(pos.usdc_value, DEFAULT_FUNDED_AMOUNT);
 
     // Verify events
     // Event payload: (usdc_amount, shares_burned)
@@ -1332,7 +1358,7 @@ fn test_partial_withdraw_succeeds_within_available_liquidity() {
     );
     assert_eq!(
         <(u128, u128)>::try_from_val(&te.env, &data).unwrap(),
-        (5_200_000_000, 5_200_000_000u128)
+        (available_liquidity, available_liquidity)
     );
 }
 
@@ -1350,7 +1376,8 @@ fn test_partial_withdraw_leaves_remaining_liquidity() {
     let _ = te.pool.fund_invoice(&invoice_id);
 
     let stats = te.pool.get_stats();
-    assert_eq!(stats.available_liquidity, 10_200_000_000);
+    let available_liquidity = 20_000_000_000 - DEFAULT_FUNDED_AMOUNT;
+    assert_eq!(stats.available_liquidity, available_liquidity);
 
     // Partial withdraw 5B out of 10.2B available
     let returned = te.pool.withdraw(&te.lp, &5_000_000_000);
@@ -1358,7 +1385,10 @@ fn test_partial_withdraw_leaves_remaining_liquidity() {
 
     // Remaining liquidity should be 5.2B (10.2B - 5B)
     let stats_after = te.pool.get_stats();
-    assert_eq!(stats_after.available_liquidity, 5_200_000_000);
+    assert_eq!(
+        stats_after.available_liquidity,
+        available_liquidity - 5_000_000_000
+    );
     assert_eq!(stats_after.total_deposits, 15_000_000_000);
     assert_eq!(stats_after.total_shares, 15_000_000_000);
 
@@ -1383,7 +1413,7 @@ fn test_withdraw_after_repayment_returns_more_than_deposited() {
     // funded_amount = 10_000_000_000 * 9800 / 10000 = 9_800_000_000
     // yield = face_value - funded_amount = 200_000_000, all of which accrues
     // to this LP since they are the pool's sole depositor.
-    let expected_yield = 200_000_000u128;
+    let expected_yield = DEFAULT_YIELD_AMOUNT;
 
     let pos = te.pool.get_lp_position(&te.lp);
     assert_eq!(pos.shares, deposit_amount);
@@ -1504,7 +1534,7 @@ fn test_fund_invoice_succeeds_when_no_prior_funded_entry() {
     let funded_amount: u128 = te.env.as_contract(&te.pool_id, || {
         te.env.storage().persistent().get(&funded_key).unwrap()
     });
-    assert_eq!(funded_amount, 9_800_000_000);
+    assert_eq!(funded_amount, DEFAULT_FUNDED_AMOUNT);
 }
 
 // ============== ISSUE #281: INSTANCE TTL EXTENSION ==============
