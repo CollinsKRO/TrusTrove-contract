@@ -983,6 +983,10 @@ fn test_handle_default() {
     assert_eq!(after.active_invoice_count, 0);
     assert_eq!(after.total_shares, before.total_shares);
     assert_eq!(
+        after.total_loss_realised,
+        before.total_loss_realised + funded_amount
+    );
+    assert_eq!(
         position_after.usdc_value,
         position_before.usdc_value - funded_amount
     );
@@ -1034,8 +1038,13 @@ fn test_handle_default_requires_invoice_contract_authorization() {
 fn test_handle_default_unknown_invoice_returns_false() {
     let te = setup();
     let dummy_id = BytesN::from_array(&te.env, &[0u8; 32]);
+    let before = te.pool.get_stats();
     let result = te.pool.handle_default(&dummy_id);
     assert!(!result);
+    assert_eq!(
+        te.pool.get_stats().total_loss_realised,
+        before.total_loss_realised
+    );
 }
 
 #[test]
