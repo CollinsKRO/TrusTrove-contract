@@ -1309,6 +1309,7 @@ fn test_partial_withdraw_succeeds_within_available_liquidity() {
     assert_eq!(pos.usdc_value, 9_800_000_000);
 
     // Verify events
+    // Event payload: (usdc_amount, shares_burned)
     let events = te.env.events().all();
     let (contract, topics, data) = events.get(events.len() - 1).unwrap();
     assert_eq!(contract, te.pool_id);
@@ -1322,7 +1323,7 @@ fn test_partial_withdraw_succeeds_within_available_liquidity() {
     );
     assert_eq!(
         <(u128, u128)>::try_from_val(&te.env, &data).unwrap(),
-        (5_200_000_000, 15_000_000_000u128)
+        (5_200_000_000, 5_200_000_000u128)
     );
 }
 
