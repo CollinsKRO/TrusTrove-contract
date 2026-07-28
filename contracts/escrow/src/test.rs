@@ -319,6 +319,17 @@ fn test_release_to_issuer_invoice_contract_panics() {
     client.release_to_issuer(&invoice_id, &invoice);
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_release_to_issuer_unknown_invoice_id_panics() {
+    let (env, client, _admin, _pool, _usdc_id, _contract_id) = setup();
+    let unknown_id = generate_invoice_id(&env, 999);
+    let issuer = Address::generate(&env);
+
+    // Never locked this invoice_id — should panic with NotFound (#2)
+    client.release_to_issuer(&unknown_id, &issuer);
+}
+
 // ============================================================================
 // Release to Pool Tests
 // ============================================================================
@@ -386,6 +397,16 @@ fn test_release_to_pool_partial_repayment_succeeds() {
     let result = client.release_to_pool(&invoice_id, &partial);
     assert!(result);
     assert_eq!(client.get_locked(&invoice_id), 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_release_to_pool_unknown_invoice_id_panics() {
+    let (env, client, _admin, _pool, _usdc_id, _contract_id) = setup();
+    let unknown_id = generate_invoice_id(&env, 999);
+
+    // Never locked this invoice_id — should panic with NotFound (#2)
+    client.release_to_pool(&unknown_id, &1_000_000_000);
 }
 
 #[test]
