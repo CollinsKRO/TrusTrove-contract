@@ -25,6 +25,10 @@ fn test_initialize() {
     let admin = Address::generate(&env);
     client.initialize(&admin);
     assert_eq!(client.get_admin(), admin);
+
+    // Assert the contract_initialized event was emitted
+    let all_events = env.events().all();
+    assert_eq!(all_events.len(), 1);
 }
 
 #[test]
