@@ -5,7 +5,7 @@ use proptest::test_runner::{Config as ProptestConfig, TestRunner};
 use soroban_sdk::{
     contract, contractimpl, contracttype, testutils::Address as _, testutils::Events as _,
     testutils::Ledger, testutils::MockAuth, testutils::MockAuthInvoke, Address, BytesN, Env,
-    IntoVal, Symbol, TryFromVal,
+    IntoVal, Symbol, TryFromVal, vec,
 };
 
 use crate::{InvoiceContract, InvoiceContractClient, InvoiceStatus};
