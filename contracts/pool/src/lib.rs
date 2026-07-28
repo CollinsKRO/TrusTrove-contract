@@ -24,6 +24,7 @@ struct PoolTotals {
     deposits: u128,
     funded: u128,
     yield_distributed: u128,
+    loss_realised: u128,
     active_invoices: u32,
     max_utilization_bps: u32,
 }
@@ -660,6 +661,7 @@ impl PoolContract {
         let totals = Self::totals(&env);
         let total_funded = totals.funded;
         let total_deposits = totals.deposits;
+        let total_loss_realised = totals.loss_realised;
 
         env.storage()
             .instance()
@@ -667,6 +669,10 @@ impl PoolContract {
         env.storage()
             .instance()
             .set(&DataKey::TotalDeposits, &(total_deposits - funded_amount));
+        env.storage().instance().set(
+            &DataKey::TotalLossRealised,
+            &(total_loss_realised + funded_amount),
+        );
 
         let active_count = totals.active_invoices;
         let new_active_count = active_count
@@ -716,6 +722,7 @@ impl PoolContract {
             available_liquidity: available,
             utilization_rate_bps: utilization,
             total_yield_distributed: totals.yield_distributed,
+            total_loss_realised: totals.loss_realised,
             active_invoice_count: totals.active_invoices,
             total_shares: totals.shares,
             max_utilization_bps: totals.max_utilization_bps,
@@ -875,6 +882,11 @@ impl PoolContract {
                 .storage()
                 .instance()
                 .get(&DataKey::TotalYieldDistributed)
+                .unwrap_or(0),
+            loss_realised: env
+                .storage()
+                .instance()
+                .get(&DataKey::TotalLossRealised)
                 .unwrap_or(0),
             active_invoices: env
                 .storage()
