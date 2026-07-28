@@ -1173,6 +1173,17 @@ impl InvoiceContract {
     }
 }
 
+/// Checks that an address is verified in the registry, panicking with the
+/// provided error if not.
+fn require_verified(env: &Env, registry_id: &Address, addr: &Address, err: InvoiceError) {
+    let mut args = Vec::new(env);
+    args.push_back(addr.clone().into_val(env));
+    let verified: bool = env.invoke_contract(registry_id, &Symbol::new(env, "is_verified"), args);
+    if !verified {
+        panic_with_error!(env, err);
+    }
+}
+
 /// Adds an invoice ID to the issuer's index if not already present.
 ///
 /// # Arguments
