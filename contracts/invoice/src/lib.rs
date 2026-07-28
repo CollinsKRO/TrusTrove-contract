@@ -541,6 +541,27 @@ impl InvoiceContract {
     /// client.repay(&invoice_id);
     /// ```
     pub fn repay(env: Env, invoice_id: BytesN<32>) -> bool {
+        // Repays an invoice from Funded, Active, or Confirmed state,
+        // transferring the face value to the pool.
+        //
+        // # Arguments
+        // * `env` - The Soroban environment.
+        // * `invoice_id` - The invoice being repaid.
+        //
+        // # Returns
+        // * `bool` - `true` when repayment is completed.
+        //
+        // # Auth
+        // * `buyer` - The buyer must authorize the repayment.
+        //
+        // # Panics
+        // * `NotFound` if the invoice cannot be found.
+        // * `InvalidStatusTransition` if invoice status is not `Funded`, `Active`, or `Confirmed`.
+        //
+        // # Example
+        // ```ignore
+        // client.repay(&invoice_id);
+        // ```
         let inv_key = DataKey::Invoice(invoice_id.clone());
         let invoice: Invoice = env
             .storage()
@@ -548,9 +569,13 @@ impl InvoiceContract {
             .get(&inv_key)
             .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
         invoice.buyer.require_auth();
-        if invoice.status != InvoiceStatus::Confirmed {
+        if invoice.status != InvoiceStatus::Funded
+            && invoice.status != InvoiceStatus::Active
+            && invoice.status != InvoiceStatus::Confirmed
+        {
             panic_with_error!(&env, InvoiceError::InvalidStatusTransition);
         }
+        let prev_status = invoice.status;
 
         let pool: Address = invoice
             .funding_pool
@@ -596,12 +621,7 @@ impl InvoiceContract {
         Self::save_invoice(&env, inv_key, &updated);
         Self::extend_instance_ttl(&env);
 
-        move_status_index(
-            &env,
-            &invoice_id,
-            InvoiceStatus::Confirmed,
-            InvoiceStatus::Repaid,
-        );
+        move_status_index(&env, &invoice_id, prev_status, InvoiceStatus::Repaid);
         events::invoice_repaid(&env, &invoice_id, updated.face_value);
         true
     }
@@ -669,7 +689,7 @@ impl InvoiceContract {
         Self::save_invoice(&env, inv_key, &updated);
         Self::extend_instance_ttl(&env);
 
-        self::move_status_index(
+        move_status_index(
             &env,
             &invoice_id,
             InvoiceStatus::Confirmed,
