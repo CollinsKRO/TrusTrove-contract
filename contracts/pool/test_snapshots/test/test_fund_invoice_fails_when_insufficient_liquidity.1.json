@@ -1913,6 +1913,21 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "TotalLossRealised"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u128": {
+                            "hi": 0,
+                            "lo": 0
+                          }
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "TotalShares"
                             }
                           ]

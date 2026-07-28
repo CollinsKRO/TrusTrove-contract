@@ -705,7 +705,7 @@ impl InvoiceContract {
             .get(&inv_key)
             .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
         invoice.buyer.require_auth();
-        let prev_status = invoice.status;
+        let _prev_status = invoice.status;
         if invoice.status != InvoiceStatus::Confirmed {
             panic_with_error!(&env, InvoiceError::InvalidStatusTransition);
         }

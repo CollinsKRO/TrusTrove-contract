@@ -269,7 +269,8 @@ fn test_create_succeeds_when_due_date_one_second_in_future() {
     // integration tests because soroban_sdk's `Val` does not implement
     // `PartialEq` for ad-hoc equality assertions.
     let events = env.events().all();
-    assert_eq!(events.len(), 1);
+    let (event_contract, _topics, _data) = events.last().expect("expected at least one event");
+    assert_eq!(event_contract, client.address.clone());
 }
 
 #[test]
@@ -1066,17 +1067,18 @@ fn test_set_pool_contract_emits_event() {
 
     let contract_id = client.address.clone();
     let events = env.events().all();
+    let (event_contract, topics, data) = events.last().expect("expected at least one event");
+    assert_eq!(event_contract, contract_id);
     assert_eq!(
-        events,
-        vec![
-            &env,
-            (
-                contract_id,
-                (Symbol::new(&env, "pool_contract_set"), pool.clone()).into_val(&env),
-                ().into_val(&env),
-            )
-        ]
+        topics,
+        (
+            Symbol::new(&env, "pool_contract_updated"),
+            pool.clone(),
+            pool.clone()
+        )
+            .into_val(&env)
     );
+    assert_eq!((), <()>::try_from_val(&env, &data).unwrap());
 }
 
 #[test]
@@ -1088,17 +1090,13 @@ fn test_set_expiry_window_emits_event() {
 
     let contract_id = client.address.clone();
     let events = env.events().all();
+    let (event_contract, topics, data) = events.last().expect("expected at least one event");
+    assert_eq!(event_contract, contract_id);
     assert_eq!(
-        events,
-        vec![
-            &env,
-            (
-                contract_id,
-                (Symbol::new(&env, "expiry_window_set"),).into_val(&env),
-                window.into_val(&env),
-            )
-        ]
+        topics,
+        (Symbol::new(&env, "expiry_window_set"),).into_val(&env)
     );
+    assert_eq!(u64::try_from_val(&env, &data).unwrap(), window);
 }
 
 #[test]
