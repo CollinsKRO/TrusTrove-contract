@@ -249,9 +249,9 @@ fn test_release_to_issuer_sends_correct_amount() {
     // Lock funds first
     client.lock(&invoice_id, &amount);
 
-    // Check issuer balance before release
-    let _issuer_balance_before = get_balance(&env, &usdc_id, &issuer);
-    let _contract_balance_before = get_balance(&env, &usdc_id, &contract_id);
+    // Capture balances before release
+    let issuer_balance_before = get_balance(&env, &usdc_id, &issuer);
+    let contract_balance_before = get_balance(&env, &usdc_id, &contract_id);
 
     // Release to issuer
     let result = client.release_to_issuer(&invoice_id, &issuer);
@@ -260,6 +260,19 @@ fn test_release_to_issuer_sends_correct_amount() {
     // Verify record was removed
     let locked = client.get_locked(&invoice_id);
     assert_eq!(locked, 0);
+
+    // Verify issuer received the funds
+    assert_eq!(
+        get_balance(&env, &usdc_id, &issuer),
+        issuer_balance_before + amount as i128,
+    );
+
+    // Verify escrow contract lost the funds
+    assert_eq!(
+        get_balance(&env, &usdc_id, &contract_id),
+        contract_balance_before - amount as i128,
+    );
+
     assert_last_event_three(
         &env,
         "released_to_issuer",
