@@ -28,8 +28,13 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit@0.22.1
+
       - name: Audit dependencies (RUSTSEC)
-        run: cargo install cargo-audit@0.22.1 --locked && cargo audit
+        run: cargo audit
 
       - name: Check formatting
         run: cargo fmt --all --check
