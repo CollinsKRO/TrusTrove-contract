@@ -496,6 +496,20 @@ fn test_get_stats_initial_state() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_get_stats_panics_on_uninitialized_pool() {
+    // A freshly deployed contract (no initialize() call) must not silently
+    // return zero-filled stats — that would let callers mistake an uninitialized
+    // pool for an empty-but-healthy one. Instead get_stats() must panic with
+    // NotInitialized (#2).
+    let env = Env::default();
+    env.mock_all_auths();
+    let pool_id = env.register_contract(None, crate::PoolContract);
+    let pool = crate::PoolContractClient::new(&env, &pool_id);
+    let _ = pool.get_stats();
+}
+
+#[test]
 fn test_get_stats_after_deposit() {
     let te = setup();
     te.pool.deposit(&te.lp, &100_000_000_000);
