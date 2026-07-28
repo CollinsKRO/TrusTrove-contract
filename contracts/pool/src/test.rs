@@ -143,6 +143,9 @@ fn setup() -> TestEnv {
     let escrow = RealEscrowClient::new(&env, &escrow_id);
     escrow.initialize(&admin, &pool_id, &invoice_id, &usdc_id);
 
+    invoice.add_supported_asset(&usdc_id);
+    invoice.add_supported_asset(&xlm_id);
+
     invoice.set_pool_contract(&pool_id);
 
     // Raise cap to 100% so existing tests (which fund at 98% utilization) still pass
