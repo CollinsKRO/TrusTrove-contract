@@ -200,6 +200,59 @@ fn test_release_to_issuer_transfers_correct_amount() {
 }
 
 #[test]
+fn test_double_release_to_issuer_first_succeeds() {
+    let (env, client, _admin, _pool, usdc_id) = setup();
+    let invoice_id = generate_invoice_id(&env);
+    let issuer = Address::generate(&env);
+    let amount: u128 = 1_000_000_000;
+
+    let mock_token = MockTokenClient::new(&env, &usdc_id);
+
+    // Lock funds — escrow contract receives amount
+    client.lock(&invoice_id, &amount);
+    assert_eq!(
+        mock_token.balance(&env.current_contract_address()),
+        amount as i128
+    );
+
+    // First release must succeed and transfer funds to issuer
+    let result = client.release_to_issuer(&invoice_id, &issuer);
+    assert!(result);
+
+    let locked = client.get_locked(&invoice_id);
+    assert_eq!(locked, 0);
+
+    // Issuer received the full amount
+    assert_eq!(mock_token.balance(&issuer), amount as i128);
+    // Escrow contract no longer holds the funds
+    assert_eq!(
+        mock_token.balance(&env.current_contract_address()),
+        0
+    );
+    assert_last_event_three(
+        &env,
+        "released_to_issuer",
+        invoice_id.clone(),
+        issuer,
+        amount,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_double_release_to_issuer_second_panics() {
+    let (env, client, _admin, _pool, _usdc) = setup();
+    let invoice_id = generate_invoice_id(&env);
+    let issuer = Address::generate(&env);
+    let amount: u128 = 1_000_000_000;
+
+    client.lock(&invoice_id, &amount);
+    client.release_to_issuer(&invoice_id, &issuer);
+    // Second call must panic with NotFound because the record was already removed
+    client.release_to_issuer(&invoice_id, &issuer);
+}
+
+#[test]
 fn test_release_to_pool_transfers_correct_amount() {
     let (env, client, _admin, pool, _usdc) = setup();
     let invoice_id = generate_invoice_id(&env);
