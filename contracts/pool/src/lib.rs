@@ -99,6 +99,9 @@ impl PoolContract {
         env.storage()
             .instance()
             .set(&DataKey::MaxUtilizationBps, &8500u32);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalLossRealised, &0u128);
         Self::extend_instance_ttl(&env);
     }
 
@@ -681,6 +684,11 @@ impl PoolContract {
         env.storage()
             .instance()
             .set(&DataKey::ActiveInvoiceCount, &new_active_count);
+
+        let total_loss = totals.loss_realised;
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalLossRealised, &(total_loss + funded_amount));
 
         env.storage().persistent().remove(&funded_key);
 
