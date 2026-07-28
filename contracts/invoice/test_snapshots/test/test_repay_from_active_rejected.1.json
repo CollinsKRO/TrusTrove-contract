@@ -28,6 +28,7 @@
         }
       ]
     ],
+    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
@@ -1793,6 +1794,8 @@
                   "i128": {
                     "hi": 0,
                     "lo": 1000000000
+                    "hi": 0,
+                    "lo": 1000000000000000
                   }
                 }
               }
@@ -2430,7 +2433,10 @@
           "v0": {
             "topics": [
               {
-                "symbol": "pool_contract_set"
+                "symbol": "pool_contract_updated"
+              },
+              {
+                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
               },
               {
                 "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"

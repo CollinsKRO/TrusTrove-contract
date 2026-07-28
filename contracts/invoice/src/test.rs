@@ -2,7 +2,7 @@
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, testutils::Address as _, testutils::Events as _,
-    testutils::Ledger, testutils::MockAuth, testutils::MockAuthInvoke, vec, Address, BytesN, Env,
+    testutils::Ledger, testutils::MockAuth, testutils::MockAuthInvoke, Address, BytesN, Env,
     IntoVal, Symbol, TryFromVal,
 };
 
@@ -327,8 +327,11 @@ fn test_create_succeeds_when_due_date_one_second_in_future() {
     // shape here; detailed per-topic comparisons live in the dedicated event
     // integration tests because soroban_sdk's `Val` does not implement
     // `PartialEq` for ad-hoc equality assertions.
+    // The setup() helper calls initialize(), which emits a contract_initialized
+    // event. Use last() to check only the invoice_created event from create().
     let events = env.events().all();
-    assert_eq!(events.len(), 1);
+    let (event_contract, _topics, _data) = events.last().expect("expected at least one event");
+    assert_eq!(event_contract, client.address.clone());
 }
 
 #[test]
@@ -676,6 +679,21 @@ fn test_mark_funded_fails_asset_mismatch() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #16)")]
+fn test_mark_funded_rejects_zero_amount() {
+    // Regression test for issue #194: mark_funded must reject
+    // funded_amount == 0 with InvalidAmount (#16).
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &0);
+}
+
+#[test]
 fn test_mark_funded_succeeds_with_matching_asset() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
@@ -719,9 +737,11 @@ fn test_set_pool_contract_emits_event() {
     let pool = mock_pool_with_asset(&env, &usdc);
     client.set_pool_contract(&pool);
 
+    // The setup() helper calls initialize(), which emits a contract_initialized
+    // event. Use last() to check only the pool_contract_updated event.
     let events = env.events().all();
-    assert_eq!(events.len(), 1);
-    let event = events.get(0).unwrap();
+    let event = events.last().expect("expected at least one event");
+    assert_eq!(event.0, client.address.clone());
     assert_eq!(event.1.len(), 3);
     let symbol: Symbol = Symbol::try_from_val(&env, &event.1.get(0).unwrap()).unwrap();
     assert_eq!(symbol, Symbol::new(&env, "pool_contract_updated"));
@@ -777,9 +797,11 @@ fn test_set_pool_contract_emits_event_on_update() {
     let second_pool = mock_pool_with_asset(&env, &usdc);
     client.set_pool_contract(&second_pool);
 
+    // The setup() helper calls initialize(), which emits a contract_initialized
+    // event. Use last() to check only the most recent pool_contract_updated event.
     let events = env.events().all();
-    assert_eq!(events.len(), 2);
-    let event = events.get(1).unwrap();
+    let event = events.last().expect("expected at least one event");
+    assert_eq!(event.0, client.address.clone());
     assert_eq!(event.1.len(), 3);
     let old: Address = Address::try_from_val(&env, &event.1.get(1).unwrap()).unwrap();
     assert_eq!(old, first_pool);
@@ -1173,19 +1195,17 @@ fn test_set_expiry_window_emits_event() {
 
     client.set_expiry_window(&window);
 
+    // The setup() helper calls initialize(), which emits a contract_initialized
+    // event. Use last() to check only the expiry_window_set event.
     let contract_id = client.address.clone();
     let events = env.events().all();
+    let (event_contract, topics, data) = events.last().expect("expected at least one event");
+    assert_eq!(event_contract, contract_id);
     assert_eq!(
-        events,
-        vec![
-            &env,
-            (
-                contract_id,
-                (Symbol::new(&env, "expiry_window_set"),).into_val(&env),
-                window.into_val(&env),
-            )
-        ]
+        topics,
+        (Symbol::new(&env, "expiry_window_set"),).into_val(&env)
     );
+    assert_eq!(u64::try_from_val(&env, &data).unwrap(), window);
 }
 
 #[test]
@@ -1239,13 +1259,16 @@ fn test_unique_invoice_ids_for_identical_inputs() {
     assert_eq!(client.get_by_buyer(&buyer).len(), 2);
     assert_eq!(client.get_by_status(&InvoiceStatus::Created).len(), 2);
 
-    // 3. Assert emitted events: two invoice_created events emitted
+    // 3. Assert emitted events: two invoice_created events emitted.
+    // The setup() helper also emits a contract_initialized event, so use
+    // penultimate and last to grab the two invoice_created events.
     let contract_id = client.address.clone();
     let events = env.events().all();
-    assert_eq!(events.len(), 2);
+    assert!(events.len() >= 3, "expected at least three events");
 
-    let (event1_contract, event1_topics, event1_data) =
-        events.get(0).expect("expected first event");
+    let (event1_contract, event1_topics, event1_data) = events
+        .get(events.len() - 2)
+        .expect("expected penultimate event");
     assert_eq!(event1_contract, contract_id);
     assert_eq!(
         event1_topics,
@@ -1260,8 +1283,7 @@ fn test_unique_invoice_ids_for_identical_inputs() {
     );
     assert_eq!(u128::try_from_val(&env, &event1_data).unwrap(), face_value);
 
-    let (event2_contract, event2_topics, event2_data) =
-        events.get(1).expect("expected second event");
+    let (event2_contract, event2_topics, event2_data) = events.last().expect("expected last event");
     assert_eq!(event2_contract, contract_id);
     assert_eq!(
         event2_topics,
