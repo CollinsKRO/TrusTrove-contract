@@ -27,6 +27,13 @@ mod storage {
 /// this value.
 pub const MAX_FACE_VALUE: u128 = u128::MAX / 10_000;
 
+/// Maximum allowed invoice lifetime in seconds.
+///
+/// This caps `due_date` to `now + MAX_INVOICE_LIFETIME_SECONDS` to reject
+/// far-future due dates that are effectively garbage data (e.g., centuries
+/// in the future). The value is ~10 years (10 * 365 * 24 * 60 * 60).
+pub const MAX_INVOICE_LIFETIME_SECONDS: u64 = 10 * 365 * 24 * 60 * 60;
+
 #[contract]
 pub struct InvoiceContract;
 
@@ -72,6 +79,7 @@ impl InvoiceContract {
             .set(&DataKey::RegistryContract, &registry_contract);
         env.storage().instance().set(&DataKey::Counter, &0u64);
         Self::extend_instance_ttl(&env);
+        events::contract_initialized(&env, &admin, &registry_contract);
     }
 
     /// Sets the pool contract address used by this invoice contract.
@@ -130,6 +138,8 @@ impl InvoiceContract {
     ///   so `due_date == now` is rejected. Pinning tests:
     ///   `test_create_fails_when_due_date_equals_now` and
     ///   `test_create_succeeds_when_due_date_one_second_in_future`.
+    /// * `InvoiceError::InvalidDueDateTooFar` if `due_date` exceeds
+    ///   `now + MAX_INVOICE_LIFETIME_SECONDS` (~10 years).
     /// * `InvoiceError::CounterOverflow` if the internal invoice counter overflows.
     ///
     /// # Returns
@@ -177,7 +187,14 @@ impl InvoiceContract {
         if face_value > MAX_FACE_VALUE {
             panic_with_error!(&env, InvoiceError::InvalidAmount);
         }
-        if due_date <= env.ledger().timestamp() {
+        let now = env.ledger().timestamp();
+        if due_date <= now {
+            panic_with_error!(&env, InvoiceError::InvalidDueDate);
+        }
+        let max_due_date = now
+            .checked_add(MAX_INVOICE_LIFETIME_SECONDS)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::MathOverflow));
+        if due_date > max_due_date {
             panic_with_error!(&env, InvoiceError::InvalidDueDate);
         }
 
@@ -1164,9 +1181,31 @@ impl InvoiceContract {
     }
 }
 
+/// Adds an invoice ID to the issuer's index if not already present.
+///
+/// # Arguments
+/// * `env` - The Soroban environment.
+/// * `issuer` - The issuer address.
+/// * `invoice_id` - The invoice ID to add.
+///
+/// # Panics
+/// Does not panic.
+///
+/// # Returns
+/// * `()` - No value is returned.
 fn extend_issuer_index(env: &Env, issuer: &Address, invoice_id: &BytesN<32>) {
     let count_key = DataKey::IssuerIndexCount(issuer.clone());
     let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+
+    // Check if invoice_id already exists in this issuer index
+    for i in 0..count {
+        let entry_key = DataKey::IssuerIndexEntry(issuer.clone(), i);
+        let existing_id: BytesN<32> = env.storage().persistent().get(&entry_key).unwrap();
+        if existing_id == *invoice_id {
+            return; // Already exists, skip duplicate
+        }
+    }
+
     let entry_key = DataKey::IssuerIndexEntry(issuer.clone(), count);
     env.storage().persistent().set(&entry_key, invoice_id);
     env.storage().persistent().set(&count_key, &(count + 1));
@@ -1178,9 +1217,31 @@ fn extend_issuer_index(env: &Env, issuer: &Address, invoice_id: &BytesN<32>) {
         .extend_ttl(&count_key, 100, 2_000_000);
 }
 
+/// Adds an invoice ID to the buyer's index if not already present.
+///
+/// # Arguments
+/// * `env` - The Soroban environment.
+/// * `buyer` - The buyer address.
+/// * `invoice_id` - The invoice ID to add.
+///
+/// # Panics
+/// Does not panic.
+///
+/// # Returns
+/// * `()` - No value is returned.
 fn extend_buyer_index(env: &Env, buyer: &Address, invoice_id: &BytesN<32>) {
     let count_key = DataKey::BuyerIndexCount(buyer.clone());
     let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+
+    // Check if invoice_id already exists in this buyer index
+    for i in 0..count {
+        let entry_key = DataKey::BuyerIndexEntry(buyer.clone(), i);
+        let existing_id: BytesN<32> = env.storage().persistent().get(&entry_key).unwrap();
+        if existing_id == *invoice_id {
+            return; // Already exists, skip duplicate
+        }
+    }
+
     let entry_key = DataKey::BuyerIndexEntry(buyer.clone(), count);
     env.storage().persistent().set(&entry_key, invoice_id);
     env.storage().persistent().set(&count_key, &(count + 1));
@@ -1192,10 +1253,32 @@ fn extend_buyer_index(env: &Env, buyer: &Address, invoice_id: &BytesN<32>) {
         .extend_ttl(&count_key, 100, 2_000_000);
 }
 
+/// Adds an invoice ID to the status index if not already present.
+///
+/// # Arguments
+/// * `env` - The Soroban environment.
+/// * `status` - The invoice status.
+/// * `invoice_id` - The invoice ID to add.
+///
+/// # Panics
+/// Does not panic.
+///
+/// # Returns
+/// * `()` - No value is returned.
 fn extend_status_index(env: &Env, status: InvoiceStatus, invoice_id: &BytesN<32>) {
     let status_u32 = status as u32;
     let count_key = DataKey::StatusIndexCount(status_u32);
     let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+
+    // Check if invoice_id already exists in this status index
+    for i in 0..count {
+        let entry_key = DataKey::StatusIndexEntry(status_u32, i);
+        let existing_id: BytesN<32> = env.storage().persistent().get(&entry_key).unwrap();
+        if existing_id == *invoice_id {
+            return; // Already exists, skip duplicate
+        }
+    }
+
     let entry_key = DataKey::StatusIndexEntry(status_u32, count);
     env.storage().persistent().set(&entry_key, invoice_id);
     env.storage().persistent().set(&count_key, &(count + 1));
@@ -1207,7 +1290,36 @@ fn extend_status_index(env: &Env, status: InvoiceStatus, invoice_id: &BytesN<32>
         .extend_ttl(&count_key, 100, 2_000_000);
 }
 
+/// Moves an invoice ID from one status index to another, with idempotency for replayed transitions.
+///
+/// This function checks if the invoice is already in the target status index before performing
+/// any operations. If already present, it returns early without modifying counts or indexes,
+/// making replayed transitions a no-op.
+///
+/// # Arguments
+/// * `env` - The Soroban environment.
+/// * `invoice_id` - The invoice ID to move.
+/// * `from` - The source status.
+/// * `to` - The target status.
+///
+/// # Panics
+/// * `InvoiceError::InvalidStatusTransition` if the source status count underflows.
+///
+/// # Returns
+/// * `()` - No value is returned.
 fn move_status_index(env: &Env, invoice_id: &BytesN<32>, from: InvoiceStatus, to: InvoiceStatus) {
+    // Check if invoice is already in the target status index (idempotency for replayed transitions)
+    let to_u32 = to as u32;
+    let count_key = DataKey::StatusIndexCount(to_u32);
+    let count: u32 = env.storage().persistent().get(&count_key).unwrap_or(0);
+    for i in 0..count {
+        let entry_key = DataKey::StatusIndexEntry(to_u32, i);
+        let existing_id: BytesN<32> = env.storage().persistent().get(&entry_key).unwrap();
+        if existing_id == *invoice_id {
+            return; // Already in target index, skip all operations
+        }
+    }
+
     decrement_status_count(env, from);
     increment_status_count(env, to);
     extend_status_index(env, to, invoice_id);
