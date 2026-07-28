@@ -84,6 +84,9 @@ impl PoolContract {
             .set(&DataKey::TotalYieldDistributed, &0u128);
         env.storage()
             .instance()
+            .set(&DataKey::TotalLossRealised, &0u128);
+        env.storage()
+            .instance()
             .set(&DataKey::ActiveInvoiceCount, &0u32);
         env.storage()
             .instance()
@@ -676,6 +679,8 @@ impl PoolContract {
     /// # Panics
     /// * `ActiveCountUnderflow` if the active-invoice counter would underflow
     ///   (e.g. double-default of the same invoice).
+    /// * `Overflow` if adding the defaulted principal to the cumulative
+    ///   realised-loss counter would overflow.
     ///
     /// # Returns
     /// * `bool` - `true` when default handling completes, `false` if invoice is not funded.
@@ -716,6 +721,14 @@ impl PoolContract {
             .instance()
             .get(&DataKey::TotalDeposits)
             .unwrap();
+        let total_loss_realised: u128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalLossRealised)
+            .unwrap_or(0);
+        let new_total_loss_realised = total_loss_realised
+            .checked_add(funded_amount)
+            .unwrap_or_else(|| panic_with_error!(&env, PoolError::Overflow));
 
         env.storage()
             .instance()
@@ -723,6 +736,9 @@ impl PoolContract {
         env.storage()
             .instance()
             .set(&DataKey::TotalDeposits, &(total_deposits - funded_amount));
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalLossRealised, &new_total_loss_realised);
 
         let active_count: u32 = env
             .storage()
@@ -781,6 +797,11 @@ impl PoolContract {
             .instance()
             .get(&DataKey::TotalYieldDistributed)
             .unwrap_or(0);
+        let total_loss_realised: u128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::TotalLossRealised)
+            .unwrap_or(0);
         let active_count: u32 = env
             .storage()
             .instance()
@@ -803,6 +824,7 @@ impl PoolContract {
             available_liquidity: available,
             utilization_rate_bps: utilization,
             total_yield_distributed: total_yield,
+            total_loss_realised,
             active_invoice_count: active_count,
             total_shares,
             max_utilization_bps,
