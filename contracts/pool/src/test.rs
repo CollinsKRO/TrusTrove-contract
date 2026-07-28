@@ -1264,7 +1264,10 @@ fn test_withdraw_all_shares_panics_when_insufficient_liquidity_at_full_utilizati
 
     // Verify the pool is at 100% utilization (no available liquidity)
     let stats = te.pool.get_stats();
-    assert_eq!(stats.available_liquidity, 0, "pool should have zero available liquidity");
+    assert_eq!(
+        stats.available_liquidity, 0,
+        "pool should have zero available liquidity"
+    );
     assert_eq!(stats.total_funded, 9_800_000_000);
     assert_eq!(stats.total_deposits, 9_800_000_000);
 
