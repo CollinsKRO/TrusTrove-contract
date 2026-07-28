@@ -1,5 +1,7 @@
 #![cfg(test)]
 
+extern crate std;
+
 use crate::{DataKey, Profile, RegistryContract, RegistryContractClient, Role, VerificationStatus};
 use proptest::prelude::*;
 use proptest::test_runner::{Config as ProptestConfig, TestRunner};
@@ -678,6 +680,146 @@ fn test_profile_packing_correctness() {
     let p4 = Profile::new(addr.clone(), Role::Buyer, false, 100, metadata.clone());
     assert_eq!(p4.role(), Role::Buyer);
     assert!(!p4.verified());
+}
+
+// ============== METADATA EDGE CASE TESTS (#190) ==============
+
+#[test]
+fn test_metadata_empty_map_accepted() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    let metadata = map![&env];
+    let result = client.register_issuer(&issuer, &metadata);
+    assert!(result);
+    let profile = client.get_profile(&issuer);
+    assert_eq!(profile.metadata.len(), 0);
+}
+
+#[test]
+fn test_metadata_max_size_map_accepted() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    let mut metadata = map![&env];
+    for i in 0..20 {
+        let key = String::from_str(&env, &std::format!("key_{}", i));
+        let value = String::from_str(&env, &std::format!("value_{}", i));
+        metadata.set(key, value);
+    }
+    assert_eq!(metadata.len(), 20);
+    let result = client.register_issuer(&issuer, &metadata);
+    assert!(result);
+    let profile = client.get_profile(&issuer);
+    assert_eq!(profile.metadata.len(), 20);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_metadata_oversize_map_panics() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    let mut metadata = map![&env];
+    for i in 0..21 {
+        let key = String::from_str(&env, &std::format!("key_{}", i));
+        let value = String::from_str(&env, &std::format!("value_{}", i));
+        metadata.set(key, value);
+    }
+    client.register_issuer(&issuer, &metadata);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_metadata_oversize_map_via_update_panics() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    client.register_issuer(&issuer, &map![&env]);
+
+    let mut oversized = map![&env];
+    for i in 0..21 {
+        let key = String::from_str(&env, &std::format!("key_{}", i));
+        let value = String::from_str(&env, &std::format!("value_{}", i));
+        oversized.set(key, value);
+    }
+    client.update_metadata(&issuer, &oversized);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_metadata_empty_key_panics() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    let metadata = map![
+        &env,
+        (String::from_str(&env, ""), String::from_str(&env, "value"),)
+    ];
+    client.register_issuer(&issuer, &metadata);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_metadata_empty_value_panics() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    let metadata = map![
+        &env,
+        (String::from_str(&env, "key"), String::from_str(&env, ""),)
+    ];
+    client.register_issuer(&issuer, &metadata);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_metadata_empty_key_via_update_panics() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    client.register_issuer(&issuer, &map![&env]);
+
+    let bad_metadata = map![
+        &env,
+        (String::from_str(&env, ""), String::from_str(&env, "value"),)
+    ];
+    client.update_metadata(&issuer, &bad_metadata);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_metadata_empty_value_via_update_panics() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    client.register_issuer(&issuer, &map![&env]);
+
+    let bad_metadata = map![
+        &env,
+        (String::from_str(&env, "key"), String::from_str(&env, ""),)
+    ];
+    client.update_metadata(&issuer, &bad_metadata);
+}
+
+#[test]
+fn test_metadata_buyer_empty_map_accepted() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let buyer = Address::generate(&env);
+    let result = client.register_buyer(&buyer, &map![&env]);
+    assert!(result);
+    let profile = client.get_profile(&buyer);
+    assert_eq!(profile.metadata.len(), 0);
 }
 
 // ============== EVENT-EMISSION TESTS (#188) ==============
