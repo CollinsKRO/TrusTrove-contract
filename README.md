@@ -363,6 +363,16 @@ The goal is LP-governed capital allocation:
 
 If you want to contribute to governance design, open an issue tagged `complexity:high` and link your proposal.
 
+### `trigger_default` is admin-gated, not time-based
+
+`invoice::trigger_default` requires `admin.require_auth()`. Although the on-chain eligibility check enforces `now >= due_date`, the function is **not** an automatic time-based trigger — an admin must explicitly call it. This creates a single point of control over declaring defaults.
+
+**Risk:** Delays or failure to call `trigger_default` in time prevents the pool from recovering funds via `escrow::handle_default`, which could harm LP returns. A compromised admin could also misuse this power.
+
+**Current design rationale:** A human-in-the-loop check before declaring a default prevents accidental defaults from clock drift, chain reorgs, or misconfigured automation. It also allows for off-chain negotiations (grace periods, extensions) before a default is formally recorded.
+
+**Roadmap:** Introduce a permissionless time-based default mechanism where any caller can trigger a default for an invoice past its `due_date + grace_period`, without requiring admin authorization. The admin would retain only an override capability (e.g., to halt a false default).
+
 ### No emergency pause mechanism
 
 There is currently no circuit breaker. If a critical bug is found post-deployment the only recourse is to stop directing traffic to the affected contracts via the frontend.
