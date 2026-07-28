@@ -19,6 +19,9 @@
   <a href="https://github.com/TrusTrove/TrusTrove-contract/actions/workflows/ci.yml">
     <img src="https://img.shields.io/github/actions/workflow/status/TrusTrove/TrusTrove-contract/ci.yml?branch=main&label=build" />
   </a>
+  <a href="https://codecov.io/gh/TrusTrove/TrusTrove-contract">
+    <img src="https://img.shields.io/codecov/c/github/TrusTrove/TrusTrove-contract?label=coverage" />
+  </a>
   <img src="https://img.shields.io/badge/rust-1.85.0-orange" />
   <img src="https://img.shields.io/badge/soroban--sdk-21.7.6-blueviolet" />
   <img src="https://img.shields.io/badge/network-Stellar%20Testnet-00c9a7" />
@@ -83,7 +86,7 @@ Created → Listed → Funded → Active → Confirmed → Repaid
 ```
 
 ```
-create(issuer, buyer, face_value, due_date) → invoice_id
+create(issuer, buyer, face_value, due_date, funding_asset) → invoice_id
 list_for_financing(invoice_id, discount_bps) → bool
 mark_funded(invoice_id, funded_amount) → bool   ← pool_contract only
 mark_shipped(invoice_id) → bool

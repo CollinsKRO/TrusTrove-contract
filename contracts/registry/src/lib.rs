@@ -404,6 +404,55 @@ impl RegistryContract {
         true
     }
 
+    /// Reinstates verification for a previously revoked profile.
+    ///
+    /// This is the admin-only inverse of `revoke`: it flips the profile's
+    /// `verified` flag back to `true` and emits a dedicated
+    /// `address_reinstated` event so integrators can distinguish
+    /// reinstatement from a generic verification toggle.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `address` - The registered address whose verification should be
+    ///   reinstated.
+    ///
+    /// # Auth
+    /// * Requires `admin.require_auth()` — only the stored contract admin
+    ///   (read from `DataKey::Admin`) may reinstate a profile.
+    ///
+    /// # Panics
+    /// * `RegistryError::NotFound` if the contract admin is not set (contract
+    ///   was never initialized).
+    /// * `RegistryError::NotFound` if no profile is stored for `address`.
+    ///
+    /// # Returns
+    /// * `bool` - `true` when the profile is successfully reinstated.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let ok = client.reinstate(&issuer);
+    /// ```
+    pub fn reinstate(env: Env, address: Address) -> bool {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
+        admin.require_auth();
+        let key = DataKey::Profile(address.clone());
+        let mut profile: Profile = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
+        profile.set_verified(true);
+        env.storage().persistent().set(&key, &profile);
+        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        events::address_reinstated(&env, &address);
+        Self::extend_instance_ttl(&env);
+        true
+    }
+
     pub fn verify_profile(env: Env, address: Address, verify: bool) -> bool {
         let admin: Address = env
             .storage()
