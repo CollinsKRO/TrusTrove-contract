@@ -2371,6 +2371,21 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "TotalLossRealised"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u128": {
+                            "hi": 0,
+                            "lo": 9800000000
+                          }
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "TotalShares"
                             }
                           ]
