@@ -665,7 +665,18 @@ impl PoolContract {
         true
     }
 
-    /// Forwards a defaulted invoice to escrow default handling.
+    /// Forwards a defaulted invoice to escrow default handling and updates
+    /// the invoice status on the invoice contract.
+    ///
+    /// This function performs the following cross-contract sequence:
+    /// 1. Calls `escrow.handle_default()` to release escrowed funds back
+    ///    to the pool.
+    /// 2. Calls `invoice.mark_defaulted()` to persist the `Defaulted` status
+    ///    on the invoice record, update the status index, and emit the
+    ///    `invoice_defaulted` event.
+    /// 3. Updates the pool's local accounting (TotalFunded, TotalDeposits,
+    ///    TotalLossRealised, ActiveInvoiceCount) and removes the funded
+    ///    invoice entry.
     ///
     /// # Arguments
     /// * `env` - The Soroban environment.
@@ -714,6 +725,15 @@ impl PoolContract {
         args.push_back(pool_address.into_val(&env));
         let _: bool =
             env.invoke_contract(&escrow_contract, &Symbol::new(&env, "handle_default"), args);
+
+        // Update invoice status to Defaulted via a cross-contract call
+        let mut args = Vec::new(&env);
+        args.push_back(invoice_id.clone().into_val(&env));
+        let _: bool = env.invoke_contract(
+            &invoice_contract,
+            &Symbol::new(&env, "mark_defaulted"),
+            args,
+        );
 
         let total_funded: u128 = env.storage().instance().get(&DataKey::TotalFunded).unwrap();
         let total_deposits: u128 = env

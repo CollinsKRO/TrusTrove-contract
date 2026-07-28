@@ -1006,6 +1006,26 @@ fn test_handle_default() {
 }
 
 #[test]
+fn test_handle_default_updates_invoice_status() {
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+    te.pool.fund_invoice(&invoice_id);
+
+    // Invoice should be in Funded status (2)
+    assert_eq!(te.invoice.get_status(&invoice_id), 2);
+
+    te.env
+        .ledger()
+        .set_timestamp(te.env.ledger().timestamp() + 60);
+    let result = te.pool.handle_default(&invoice_id);
+    assert!(result);
+
+    // After handle_default, invoice should be Defaulted (6)
+    assert_eq!(te.invoice.get_status(&invoice_id), 6);
+}
+
+#[test]
 fn test_handle_default_rejects_double_default() {
     let te = setup();
     te.pool.deposit(&te.lp, &100_000_000_000);
