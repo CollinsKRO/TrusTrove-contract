@@ -5,7 +5,7 @@ use proptest::test_runner::{Config as ProptestConfig, TestRunner};
 use soroban_sdk::{
     contract, contractimpl, contracttype,
     testutils::{Address as _, Events as _, Ledger},
-    vec, Address, BytesN, Env, IntoVal, Symbol, TryFromVal,
+    Address, BytesN, Env, IntoVal, Symbol, TryFromVal,
 };
 
 use crate::{InvoiceContract, InvoiceContractClient, InvoiceStatus};
@@ -1078,7 +1078,7 @@ fn test_set_pool_contract_emits_event() {
         )
             .into_val(&env)
     );
-    assert_eq!((), <()>::try_from_val(&env, &data).unwrap());
+    <()>::try_from_val(&env, &data).unwrap();
 }
 
 #[test]
