@@ -86,7 +86,7 @@ Created → Listed → Funded → Active → Confirmed → Repaid
 ```
 
 ```
-create(issuer, buyer, face_value, due_date) → invoice_id
+create(issuer, buyer, face_value, due_date, funding_asset) → invoice_id
 list_for_financing(invoice_id, discount_bps) → bool
 mark_funded(invoice_id, funded_amount) → bool   ← pool_contract only
 mark_shipped(invoice_id) → bool
