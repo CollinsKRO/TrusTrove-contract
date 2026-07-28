@@ -1,7 +1,6 @@
 #![no_std]
 
 use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, Map, String, Vec};
-use trusttrove_common::persistent_set;
 
 mod errors;
 mod events;
@@ -10,6 +9,9 @@ mod types;
 
 pub use errors::*;
 pub use types::*;
+
+/// Maximum number of entries allowed in a metadata map.
+const MAX_METADATA_SIZE: u32 = 20;
 
 #[contract]
 pub struct RegistryContract;
@@ -22,11 +24,17 @@ impl RegistryContract {
     /// * `env` - The Soroban environment.
     /// * `admin` - The address that will be authorized as contract admin.
     ///
-    /// # Returns
-    /// * `()` - No value is returned.
+    /// # Auth
+    /// * Requires `admin.require_auth()` — the incoming admin must sign the
+    ///   initialization call so ownership cannot be assigned to an address
+    ///   the caller does not control.
     ///
     /// # Panics
-    /// * `AlreadyInitialized` if the contract has already been initialized.
+    /// * `RegistryError::AlreadyInitialized` if the contract has already been
+    ///   initialized (an admin is already stored under `DataKey::Admin`).
+    ///
+    /// # Returns
+    /// * `()` - No value is returned.
     ///
     /// # Example
     /// ```ignore
@@ -38,26 +46,41 @@ impl RegistryContract {
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
+        Self::extend_instance_ttl(&env);
     }
 
     /// Registers a new issuer profile with initial metadata.
+    ///
+    /// The profile is stored under `DataKey::Profile(address)` in persistent
+    /// storage with its TTL extended, and an `issuer_registered` event is
+    /// emitted on success.
     ///
     /// # Arguments
     /// * `env` - The Soroban environment.
     /// * `address` - The issuer address to register.
     /// * `metadata` - Profile metadata for the issuer.
     ///
-    /// # Returns
-    /// * `bool` - `true` when registration succeeds.
+    /// # Auth
+    /// * Requires `address.require_auth()` — the issuer being registered
+    ///   must sign the call, so accounts cannot be enrolled without consent.
     ///
     /// # Panics
-    /// * `AlreadyRegistered` if the address is already registered.
+    /// * `RegistryError::NotInitialized` if the contract has not been initialized.
+    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds `MAX_METADATA_SIZE`
+    ///   entries or contains an empty key or value.
+    /// * `RegistryError::AlreadyRegistered` if a profile is already stored
+    ///   for `address`.
+    ///
+    /// # Returns
+    /// * `bool` - `true` when registration succeeds.
     ///
     /// # Example
     /// ```ignore
     /// let result = client.register_issuer(&issuer, &metadata);
     /// ```
     pub fn register_issuer(env: Env, address: Address, metadata: Map<String, String>) -> bool {
+        Self::require_initialized(&env);
+        Self::validate_metadata(&env, &metadata);
         address.require_auth();
         if env
             .storage()
@@ -66,16 +89,18 @@ impl RegistryContract {
         {
             panic_with_error!(&env, RegistryError::AlreadyRegistered);
         }
-        let profile = Profile {
-            address: address.clone(),
-            role: Role::Issuer,
-            verified: true,
-            registered_at: env.ledger().timestamp(),
+        let profile = Profile::new(
+            address.clone(),
+            Role::Issuer,
+            true,
+            env.ledger().timestamp(),
             metadata,
-        };
+        );
         let key = DataKey::Profile(address.clone());
-        persistent_set(&env, &key, &profile);
+        env.storage().persistent().set(&key, &profile);
+        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
         events::issuer_registered(&env, &address);
+        Self::extend_instance_ttl(&env);
         true
     }
 
@@ -100,24 +125,28 @@ impl RegistryContract {
         let mut registered: u32 = 0;
         for entry in entries.iter() {
             let (address, metadata) = entry;
+            Self::validate_metadata(&env, &metadata);
             let key = DataKey::Profile(address.clone());
             if env.storage().persistent().has(&key) {
                 skipped.push_back(address.clone());
                 continue;
             }
 
-            let profile = Profile {
-                address: address.clone(),
-                role: Role::Issuer,
-                verified: true,
-                registered_at: env.ledger().timestamp(),
+            let profile = Profile::new(
+                address.clone(),
+                Role::Issuer,
+                true,
+                env.ledger().timestamp(),
                 metadata,
-            };
+            );
 
-            persistent_set(&env, &key, &profile);
+            env.storage().persistent().set(&key, &profile);
+            env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
             events::issuer_registered(&env, &address);
             registered += 1;
         }
+
+        events::batch_registered(&env, registered, skipped.len());
 
         if registered > 0 {
             Self::extend_instance_ttl(&env);
@@ -127,22 +156,36 @@ impl RegistryContract {
 
     /// Registers a new buyer profile with initial metadata.
     ///
+    /// The profile is stored under `DataKey::Profile(address)` in persistent
+    /// storage with its TTL extended, and a `buyer_registered` event is
+    /// emitted on success.
+    ///
     /// # Arguments
     /// * `env` - The Soroban environment.
     /// * `address` - The buyer address to register.
     /// * `metadata` - Profile metadata for the buyer.
     ///
-    /// # Returns
-    /// * `bool` - `true` when registration succeeds.
+    /// # Auth
+    /// * Requires `address.require_auth()` — the buyer being registered must
+    ///   sign the call, so accounts cannot be enrolled without consent.
     ///
     /// # Panics
-    /// * `AlreadyRegistered` if the address is already registered.
+    /// * `RegistryError::NotInitialized` if the contract has not been initialized.
+    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds `MAX_METADATA_SIZE`
+    ///   entries or contains an empty key or value.
+    /// * `RegistryError::AlreadyRegistered` if a profile is already stored
+    ///   for `address`.
+    ///
+    /// # Returns
+    /// * `bool` - `true` when registration succeeds.
     ///
     /// # Example
     /// ```ignore
     /// let result = client.register_buyer(&buyer, &metadata);
     /// ```
     pub fn register_buyer(env: Env, address: Address, metadata: Map<String, String>) -> bool {
+        Self::require_initialized(&env);
+        Self::validate_metadata(&env, &metadata);
         address.require_auth();
         if env
             .storage()
@@ -151,16 +194,18 @@ impl RegistryContract {
         {
             panic_with_error!(&env, RegistryError::AlreadyRegistered);
         }
-        let profile = Profile {
-            address: address.clone(),
-            role: Role::Buyer,
-            verified: true,
-            registered_at: env.ledger().timestamp(),
+        let profile = Profile::new(
+            address.clone(),
+            Role::Buyer,
+            true,
+            env.ledger().timestamp(),
             metadata,
-        };
+        );
         let key = DataKey::Profile(address.clone());
-        persistent_set(&env, &key, &profile);
+        env.storage().persistent().set(&key, &profile);
+        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
         events::buyer_registered(&env, &address);
+        Self::extend_instance_ttl(&env);
         true
     }
 
@@ -175,13 +220,16 @@ impl RegistryContract {
     /// * `bool` - `true` when metadata is updated successfully.
     ///
     /// # Panics
-    /// * `NotFound` if the address is not registered.
+    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds `MAX_METADATA_SIZE`
+    ///   entries or contains an empty key or value.
+    /// * `RegistryError::NotFound` if the address is not registered.
     ///
     /// # Example
     /// ```ignore
     /// let result = client.update_metadata(&issuer, &new_metadata);
     /// ```
     pub fn update_metadata(env: Env, address: Address, metadata: Map<String, String>) -> bool {
+        Self::validate_metadata(&env, &metadata);
         address.require_auth();
         let key = DataKey::Profile(address.clone());
         let mut profile: Profile = env
@@ -190,7 +238,8 @@ impl RegistryContract {
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
         profile.metadata = metadata;
-        persistent_set(&env, &key, &profile);
+        env.storage().persistent().set(&key, &profile);
+        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
         events::metadata_updated(&env, &address);
         true
     }
@@ -201,11 +250,14 @@ impl RegistryContract {
     /// * `env` - The Soroban environment.
     /// * `address` - The address of the profile to retrieve.
     ///
-    /// # Returns
-    /// * `Profile` - The stored profile for the address.
+    /// # Auth
+    /// * No `require_auth()` call is made — this is a read-only view.
     ///
     /// # Panics
-    /// * `NotFound` if the address is not registered.
+    /// * `RegistryError::NotFound` if no profile is stored for `address`.
+    ///
+    /// # Returns
+    /// * `Profile` - The stored profile for the address.
     ///
     /// # Example
     /// ```ignore
@@ -220,9 +272,19 @@ impl RegistryContract {
 
     /// Checks whether a registered profile is verified.
     ///
+    /// Returns `false` for addresses that have never been registered as well
+    /// as for addresses whose profile has had verification revoked.
+    ///
     /// # Arguments
     /// * `env` - The Soroban environment.
     /// * `address` - The address to check.
+    ///
+    /// # Auth
+    /// * No `require_auth()` call is made — this is a read-only view.
+    ///
+    /// # Panics
+    /// * This function does not panic; missing profiles are reported as
+    ///   `false` rather than as an error.
     ///
     /// # Returns
     /// * `bool` - `true` if the address is registered and verified.
@@ -235,7 +297,7 @@ impl RegistryContract {
         env.storage()
             .persistent()
             .get::<_, Profile>(&DataKey::Profile(address))
-            .map(|p| p.verified)
+            .map(|p| p.verified())
             .unwrap_or(false)
     }
 
@@ -246,11 +308,38 @@ impl RegistryContract {
             .get::<_, Profile>(&DataKey::Profile(address))
         {
             None => VerificationStatus::Unregistered,
-            Some(p) if p.verified => VerificationStatus::Verified,
+            Some(p) if p.verified() => VerificationStatus::Verified,
             Some(_) => VerificationStatus::Revoked,
         }
     }
 
+    /// Revokes verification for a registered profile.
+    ///
+    /// Loads the profile, flips its verified flag to `false`, persists the
+    /// change (extending the profile's TTL), and emits an `address_revoked`
+    /// event.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `address` - The registered address whose verification should be
+    ///   revoked.
+    ///
+    /// # Auth
+    /// * Requires `admin.require_auth()` — only the stored contract admin
+    ///   (read from `DataKey::Admin`) may revoke a profile.
+    ///
+    /// # Panics
+    /// * `RegistryError::NotFound` if the contract admin is not set (contract
+    ///   was never initialized).
+    /// * `RegistryError::NotFound` if no profile is stored for `address`.
+    ///
+    /// # Returns
+    /// * `bool` - `true` when the profile is successfully marked as revoked.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let ok = client.revoke(&issuer);
+    /// ```
     pub fn revoke(env: Env, address: Address) -> bool {
         let admin: Address = env
             .storage()
@@ -264,9 +353,11 @@ impl RegistryContract {
             .persistent()
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
-        profile.verified = false;
-        persistent_set(&env, &key, &profile);
+        profile.set_verified(false);
+        env.storage().persistent().set(&key, &profile);
+        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
         events::address_revoked(&env, &address);
+        Self::extend_instance_ttl(&env);
         true
     }
 
@@ -283,10 +374,41 @@ impl RegistryContract {
             .persistent()
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
-        profile.verified = verify;
-        persistent_set(&env, &key, &profile);
+        profile.set_verified(verify);
+        env.storage().persistent().set(&key, &profile);
+        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
         events::profile_verified(&env, &address, verify);
+        Self::extend_instance_ttl(&env);
         true
+    }
+
+    pub fn transfer_ownership(env: Env, new_admin: Address) {
+        // Transfers admin ownership to a new address.
+        //
+        // Requires authentication from BOTH the current admin and the incoming
+        // new admin, preventing accidental transfers to wrong addresses.
+        //
+        // # Arguments
+        // * `env` - The Soroban environment.
+        // * `new_admin` - The address that will become the new admin.
+        //
+        // # Panics
+        // * `NotFound` if the admin is not set.
+        //
+        // # Example
+        // ```ignore
+        // client.transfer_ownership(&new_admin);
+        // ```
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
+        admin.require_auth();
+        new_admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        events::ownership_transferred(&env, &admin, &new_admin);
+        Self::extend_instance_ttl(&env);
     }
 
     /// Returns the stored contract admin address.
@@ -294,11 +416,15 @@ impl RegistryContract {
     /// # Arguments
     /// * `env` - The Soroban environment.
     ///
-    /// # Returns
-    /// * `Address` - The stored admin address.
+    /// # Auth
+    /// * No `require_auth()` call is made — this is a read-only view.
     ///
     /// # Panics
-    /// * `NotFound` if the admin address is not set.
+    /// * `RegistryError::NotFound` if the admin address is not set (contract
+    ///   was never initialized).
+    ///
+    /// # Returns
+    /// * `Address` - The stored admin address.
     ///
     /// # Example
     /// ```ignore
@@ -313,7 +439,29 @@ impl RegistryContract {
 }
 
 impl RegistryContract {
+    fn require_initialized(env: &Env) {
+        if !env.storage().instance().has(&DataKey::Admin) {
+            panic_with_error!(env, RegistryError::NotInitialized);
+        }
+    }
+
     fn extend_instance_ttl(env: &Env) {
         env.storage().instance().extend_ttl(100, 2_000_000);
+    }
+
+    fn validate_metadata(env: &Env, metadata: &Map<String, String>) {
+        if metadata.len() > MAX_METADATA_SIZE {
+            panic_with_error!(env, RegistryError::InvalidMetadata);
+        }
+        for key in metadata.keys().iter() {
+            if key.is_empty() {
+                panic_with_error!(env, RegistryError::InvalidMetadata);
+            }
+            if let Some(value) = metadata.get(key) {
+                if value.is_empty() {
+                    panic_with_error!(env, RegistryError::InvalidMetadata);
+                }
+            }
+        }
     }
 }

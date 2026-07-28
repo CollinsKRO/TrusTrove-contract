@@ -78,22 +78,40 @@ pub fn invoice_expired(env: &Env, invoice_id: &BytesN<32>) {
     );
 }
 
-pub fn pool_contract_set(env: &Env, new_pool: &Address) {
-    env.events().publish(
-        (Symbol::new(env, "pool_contract_set"), new_pool.clone()),
-        (),
-    );
-}
-
 pub fn expiry_window_set(env: &Env, window: u64) {
     env.events()
         .publish((Symbol::new(env, "expiry_window_set"),), window);
 }
 
-#[allow(dead_code)]
-pub fn delivery_unconfirmed(env: &Env, invoice_id: &BytesN<32>) {
+pub fn ownership_transferred(env: &Env, from: &Address, to: &Address) {
     env.events().publish(
-        (Symbol::new(env, "delivery_unconfirmed"), invoice_id.clone()),
+        (
+            Symbol::new(env, "ownership_transferred"),
+            from.clone(),
+            to.clone(),
+        ),
+        (),
+    );
+}
+
+pub fn pool_contract_updated(env: &Env, old: &Address, new: &Address) {
+    env.events().publish(
+        (
+            Symbol::new(env, "pool_contract_updated"),
+            old.clone(),
+            new.clone(),
+        ),
+        (),
+    );
+}
+
+pub fn contract_initialized(env: &Env, admin: &Address, registry_contract: &Address) {
+    env.events().publish(
+        (
+            Symbol::new(env, "contract_initialized"),
+            admin.clone(),
+            registry_contract.clone(),
+        ),
         (),
     );
 }
