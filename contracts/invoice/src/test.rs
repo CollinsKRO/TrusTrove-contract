@@ -230,7 +230,7 @@ fn test_create_succeeds_when_due_date_one_second_in_future() {
     // integration tests because soroban_sdk's `Val` does not implement
     // `PartialEq` for ad-hoc equality assertions.
     let events = env.events().all();
-    assert_eq!(events.len(), 1);
+    assert_eq!(events.len(), 2);
 }
 
 #[test]
@@ -622,8 +622,8 @@ fn test_set_pool_contract_emits_event() {
     client.set_pool_contract(&pool);
 
     let events = env.events().all();
-    assert_eq!(events.len(), 1);
-    let event = events.get(0).unwrap();
+    assert_eq!(events.len(), 2);
+    let event = events.get(1).unwrap();
     assert_eq!(event.1.len(), 3);
     let symbol: Symbol = Symbol::try_from_val(&env, &event.1.get(0).unwrap()).unwrap();
     assert_eq!(symbol, Symbol::new(&env, "pool_contract_updated"));
@@ -680,8 +680,8 @@ fn test_set_pool_contract_emits_event_on_update() {
     client.set_pool_contract(&second_pool);
 
     let events = env.events().all();
-    assert_eq!(events.len(), 2);
-    let event = events.get(1).unwrap();
+    assert_eq!(events.len(), 3);
+    let event = events.get(2).unwrap();
     assert_eq!(event.1.len(), 3);
     let old: Address = Address::try_from_val(&env, &event.1.get(1).unwrap()).unwrap();
     assert_eq!(old, first_pool);
@@ -1077,17 +1077,14 @@ fn test_set_expiry_window_emits_event() {
 
     let contract_id = client.address.clone();
     let events = env.events().all();
+    assert_eq!(events.len(), 2);
+    let (event_contract, event_topics, event_data) = events.get(1).unwrap();
+    assert_eq!(event_contract, contract_id);
     assert_eq!(
-        events,
-        vec![
-            &env,
-            (
-                contract_id,
-                (Symbol::new(&env, "expiry_window_set"),).into_val(&env),
-                window.into_val(&env),
-            )
-        ]
+        event_topics,
+        (Symbol::new(&env, "expiry_window_set"),).into_val(&env)
     );
+    assert_eq!(u64::try_from_val(&env, &event_data).unwrap(), window);
 }
 
 #[test]
@@ -1144,10 +1141,11 @@ fn test_unique_invoice_ids_for_identical_inputs() {
     // 3. Assert emitted events: two invoice_created events emitted
     let contract_id = client.address.clone();
     let events = env.events().all();
-    assert_eq!(events.len(), 2);
+    // events[0] is contract_initialized, events[1..2] are invoice_created
+    assert_eq!(events.len(), 3);
 
     let (event1_contract, event1_topics, event1_data) =
-        events.get(0).expect("expected first event");
+        events.get(1).expect("expected first invoice_created event");
     assert_eq!(event1_contract, contract_id);
     assert_eq!(
         event1_topics,
@@ -1162,8 +1160,9 @@ fn test_unique_invoice_ids_for_identical_inputs() {
     );
     assert_eq!(u128::try_from_val(&env, &event1_data).unwrap(), face_value);
 
-    let (event2_contract, event2_topics, event2_data) =
-        events.get(1).expect("expected second event");
+    let (event2_contract, event2_topics, event2_data) = events
+        .get(2)
+        .expect("expected second invoice_created event");
     assert_eq!(event2_contract, contract_id);
     assert_eq!(
         event2_topics,
