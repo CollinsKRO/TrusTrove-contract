@@ -34,6 +34,11 @@ pub fn profile_verified(env: &Env, address: &Address, status: bool) {
     );
 }
 
+pub fn profile_updated(env: &Env, address: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "profile_updated"), address.clone()), ());
+}
+
 pub fn ownership_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
     env.events().publish(
         (Symbol::new(env, "ownership_transferred"), old_admin.clone()),

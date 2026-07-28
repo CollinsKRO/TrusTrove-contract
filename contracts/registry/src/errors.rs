@@ -8,4 +8,6 @@ pub enum RegistryError {
     NotFound = 3,
     NotInitialized = 4,
     BatchSizeExceeded = 5,
+    InvalidMetadata = 6,
+    NotRegistered = 7,
 }

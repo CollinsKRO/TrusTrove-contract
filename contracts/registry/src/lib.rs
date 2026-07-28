@@ -10,6 +10,9 @@ mod types;
 pub use errors::*;
 pub use types::*;
 
+/// Maximum number of entries allowed in a metadata map.
+const MAX_METADATA_SIZE: u32 = 20;
+
 #[contract]
 pub struct RegistryContract;
 
@@ -63,6 +66,8 @@ impl RegistryContract {
     ///
     /// # Panics
     /// * `RegistryError::NotInitialized` if the contract has not been initialized.
+    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds `MAX_METADATA_SIZE`
+    ///   entries or contains an empty key or value.
     /// * `RegistryError::AlreadyRegistered` if a profile is already stored
     ///   for `address`.
     ///
@@ -75,6 +80,7 @@ impl RegistryContract {
     /// ```
     pub fn register_issuer(env: Env, address: Address, metadata: Map<String, String>) -> bool {
         Self::require_initialized(&env);
+        Self::validate_metadata(&env, &metadata);
         address.require_auth();
         if env
             .storage()
@@ -119,6 +125,7 @@ impl RegistryContract {
         let mut registered: u32 = 0;
         for entry in entries.iter() {
             let (address, metadata) = entry;
+            Self::validate_metadata(&env, &metadata);
             let key = DataKey::Profile(address.clone());
             if env.storage().persistent().has(&key) {
                 skipped.push_back(address.clone());
@@ -164,6 +171,8 @@ impl RegistryContract {
     ///
     /// # Panics
     /// * `RegistryError::NotInitialized` if the contract has not been initialized.
+    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds `MAX_METADATA_SIZE`
+    ///   entries or contains an empty key or value.
     /// * `RegistryError::AlreadyRegistered` if a profile is already stored
     ///   for `address`.
     ///
@@ -176,6 +185,7 @@ impl RegistryContract {
     /// ```
     pub fn register_buyer(env: Env, address: Address, metadata: Map<String, String>) -> bool {
         Self::require_initialized(&env);
+        Self::validate_metadata(&env, &metadata);
         address.require_auth();
         if env
             .storage()
@@ -199,6 +209,49 @@ impl RegistryContract {
         true
     }
 
+    /// Updates the metadata for an existing registered profile owned by
+    /// `address`.
+    ///
+    /// Both issuer and buyer profiles can be updated through this single
+    /// function — they share the same storage key (`DataKey::Profile`).
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `address` - The profile owner whose metadata should be replaced.
+    /// * `metadata` - The new metadata map for the profile.
+    ///
+    /// # Auth
+    /// * Requires `address.require_auth()` — only the profile owner may
+    ///   update their own metadata.
+    ///
+    /// # Panics
+    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds
+    ///   `MAX_METADATA_SIZE` entries or contains an empty key or value.
+    /// * `RegistryError::NotRegistered` if no profile exists for `address`.
+    ///
+    /// # Returns
+    /// * `bool` - `true` when the metadata is successfully updated.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let ok = client.update_profile(&issuer, &new_metadata);
+    /// ```
+    pub fn update_profile(env: Env, address: Address, metadata: Map<String, String>) -> bool {
+        Self::validate_metadata(&env, &metadata);
+        address.require_auth();
+        let key = DataKey::Profile(address.clone());
+        let mut profile: Profile = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotRegistered));
+        profile.metadata = metadata;
+        env.storage().persistent().set(&key, &profile);
+        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        events::profile_updated(&env, &address);
+        true
+    }
+
     /// Updates the metadata for an existing registered profile.
     ///
     /// # Arguments
@@ -210,13 +263,16 @@ impl RegistryContract {
     /// * `bool` - `true` when metadata is updated successfully.
     ///
     /// # Panics
-    /// * `NotFound` if the address is not registered.
+    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds `MAX_METADATA_SIZE`
+    ///   entries or contains an empty key or value.
+    /// * `RegistryError::NotFound` if the address is not registered.
     ///
     /// # Example
     /// ```ignore
     /// let result = client.update_metadata(&issuer, &new_metadata);
     /// ```
     pub fn update_metadata(env: Env, address: Address, metadata: Map<String, String>) -> bool {
+        Self::validate_metadata(&env, &metadata);
         address.require_auth();
         let key = DataKey::Profile(address.clone());
         let mut profile: Profile = env
@@ -434,5 +490,21 @@ impl RegistryContract {
 
     fn extend_instance_ttl(env: &Env) {
         env.storage().instance().extend_ttl(100, 2_000_000);
+    }
+
+    fn validate_metadata(env: &Env, metadata: &Map<String, String>) {
+        if metadata.len() > MAX_METADATA_SIZE {
+            panic_with_error!(env, RegistryError::InvalidMetadata);
+        }
+        for key in metadata.keys().iter() {
+            if key.is_empty() {
+                panic_with_error!(env, RegistryError::InvalidMetadata);
+            }
+            if let Some(value) = metadata.get(key) {
+                if value.is_empty() {
+                    panic_with_error!(env, RegistryError::InvalidMetadata);
+                }
+            }
+        }
     }
 }
