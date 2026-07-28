@@ -706,9 +706,8 @@ impl PoolContract {
     /// No authorization is required.
     ///
     /// # Panics
+    /// * `NotInitialized` if the pool contract has not been initialized.
     /// * `Overflow` if scaling `total_funded` into basis points would overflow.
-    ///   All storage reads still default to `0` (or the initialization default
-    ///   of `8500` for `max_utilization_bps`).
     ///
     /// # Returns
     /// * `PoolStats` - The current pool statistics.
@@ -718,6 +717,9 @@ impl PoolContract {
     /// let stats = client.get_stats();
     /// ```
     pub fn get_stats(env: Env) -> PoolStats {
+        if Self::admin(&env).is_none() {
+            panic_with_error!(&env, PoolError::NotInitialized);
+        }
         let totals = Self::totals(&env);
         let total_deposits = totals.deposits;
         let total_funded = totals.funded;
