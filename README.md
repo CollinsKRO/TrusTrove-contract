@@ -4,6 +4,8 @@
 
 <h1 align="center">TrusTrove — Smart Contracts</h1>
 
+
+
 <p align="center">
   Four Soroban smart contracts powering the TrusTrove trade finance protocol on Stellar.
 </p> 
