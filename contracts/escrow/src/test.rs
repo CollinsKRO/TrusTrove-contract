@@ -249,9 +249,9 @@ fn test_release_to_issuer_sends_correct_amount() {
     // Lock funds first
     client.lock(&invoice_id, &amount);
 
-    // Check issuer balance before release
-    let _issuer_balance_before = get_balance(&env, &usdc_id, &issuer);
-    let _contract_balance_before = get_balance(&env, &usdc_id, &contract_id);
+    // Capture balances before release
+    let issuer_balance_before = get_balance(&env, &usdc_id, &issuer);
+    let contract_balance_before = get_balance(&env, &usdc_id, &contract_id);
 
     // Release to issuer
     let result = client.release_to_issuer(&invoice_id, &issuer);
@@ -260,6 +260,19 @@ fn test_release_to_issuer_sends_correct_amount() {
     // Verify record was removed
     let locked = client.get_locked(&invoice_id);
     assert_eq!(locked, 0);
+
+    // Verify issuer received the funds
+    assert_eq!(
+        get_balance(&env, &usdc_id, &issuer),
+        issuer_balance_before + amount as i128,
+    );
+
+    // Verify escrow contract lost the funds
+    assert_eq!(
+        get_balance(&env, &usdc_id, &contract_id),
+        contract_balance_before - amount as i128,
+    );
+
     assert_last_event_three(
         &env,
         "released_to_issuer",
@@ -325,17 +338,53 @@ fn test_release_to_issuer_invoice_contract_panics() {
 
 #[test]
 fn test_release_to_pool_transfers_correct_amount() {
-    let (env, client, _admin, pool, _usdc_id, _contract_id) = setup();
+    let (env, client, _admin, pool, usdc_id, contract_id) = setup();
     let invoice_id = generate_invoice_id(&env, 1);
     let amount: u128 = 1_000_000_000;
 
-    // Lock funds first
+    // Capture pre-lock balances so we can prove the release actually moved
+    // tokens. The previous version of this test only checked the in-storage
+    // record and the emitted event — it never asserted on MockToken balances,
+    // which let a regression in the token-transfer path land silently.
+    let pool_balance_before = get_balance(&env, &usdc_id, &pool);
+    let contract_balance_before = get_balance(&env, &usdc_id, &contract_id);
+
+    // Lock funds first.
     client.lock(&invoice_id, &amount);
+
+    // Sanity precondition: lock must debit the pool and credit the escrow by
+    // `amount` — otherwise the release-side deltas cannot be trusted (the
+    // mock would silently produce a same-signed delta from a zero base).
+    let pool_balance_after_lock = get_balance(&env, &usdc_id, &pool);
+    let contract_balance_after_lock = get_balance(&env, &usdc_id, &contract_id);
+    assert_eq!(
+        pool_balance_after_lock,
+        pool_balance_before - (amount as i128)
+    );
+    assert_eq!(
+        contract_balance_after_lock,
+        contract_balance_before + (amount as i128)
+    );
+
     let repayment: u128 = amount;
     let result = client.release_to_pool(&invoice_id, &repayment);
     assert!(result);
 
-    // Verify record was removed
+    // The release must (a) credit the pool by `repayment` and (b) debit the
+    // escrow by the same amount. Expressed as delta-from-the-post-lock state
+    // so the asserts are independent of the absolute setup balance.
+    let pool_balance_after_release = get_balance(&env, &usdc_id, &pool);
+    let contract_balance_after_release = get_balance(&env, &usdc_id, &contract_id);
+    assert_eq!(
+        pool_balance_after_release,
+        pool_balance_after_lock + (repayment as i128)
+    );
+    assert_eq!(
+        contract_balance_after_release,
+        contract_balance_after_lock - (repayment as i128)
+    );
+
+    // Verify record was removed and the release event was emitted correctly.
     let locked = client.get_locked(&invoice_id);
     assert_eq!(locked, 0);
     assert_last_event_three(

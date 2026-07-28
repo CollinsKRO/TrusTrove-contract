@@ -170,21 +170,8 @@ impl InvoiceContract {
             .get(&DataKey::RegistryContract)
             .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
 
-        let mut args = Vec::new(&env);
-        args.push_back(issuer.clone().into_val(&env));
-        let issuer_verified: bool =
-            env.invoke_contract(&registry_id, &Symbol::new(&env, "is_verified"), args);
-        if !issuer_verified {
-            panic_with_error!(&env, InvoiceError::IssuerNotVerified);
-        }
-
-        let mut args = Vec::new(&env);
-        args.push_back(buyer.clone().into_val(&env));
-        let buyer_verified: bool =
-            env.invoke_contract(&registry_id, &Symbol::new(&env, "is_verified"), args);
-        if !buyer_verified {
-            panic_with_error!(&env, InvoiceError::BuyerNotVerified);
-        }
+        require_verified(&env, &registry_id, &issuer, InvoiceError::IssuerNotVerified);
+        require_verified(&env, &registry_id, &buyer, InvoiceError::BuyerNotVerified);
 
         if face_value == 0 {
             panic_with_error!(&env, InvoiceError::InvalidFaceValue);
@@ -469,6 +456,14 @@ impl InvoiceContract {
     /// # Returns
     /// * `bool` - `true` when confirmation is processed.
     ///
+    /// # Events
+    /// All events are published after the invoice record is persisted and its
+    /// TTL extended, so any event observer that reacts to an event is
+    /// guaranteed to see the fully-updated invoice if it reads storage in
+    /// response. When both parties have confirmed, `both_confirmed` is
+    /// published first, followed by `delivery_confirmed`; otherwise only
+    /// `delivery_confirmed` is published.
+    ///
     /// # Example
     /// ```ignore
     /// client.confirm_delivery(&invoice_id, &buyer);
@@ -502,7 +497,8 @@ impl InvoiceContract {
             invoice.buyer_confirmed = true;
         }
 
-        if invoice.issuer_confirmed && invoice.buyer_confirmed {
+        let both_confirmed = invoice.issuer_confirmed && invoice.buyer_confirmed;
+        if both_confirmed {
             invoice.status = InvoiceStatus::Confirmed;
             move_status_index(
                 &env,
@@ -510,11 +506,17 @@ impl InvoiceContract {
                 InvoiceStatus::Active,
                 InvoiceStatus::Confirmed,
             );
-            events::both_confirmed(&env, &invoice_id);
         }
 
         Self::save_invoice(&env, inv_key, &invoice);
         Self::extend_instance_ttl(&env);
+
+        // Emit events only after all state (invoice record, status index,
+        // TTLs) has been persisted, so event ordering never depends on which
+        // branch was taken above.
+        if both_confirmed {
+            events::both_confirmed(&env, &invoice_id);
+        }
         events::delivery_confirmed(&env, &invoice_id, &confirmer);
         true
     }
@@ -690,7 +692,12 @@ impl InvoiceContract {
         Self::save_invoice(&env, inv_key, &updated);
         Self::extend_instance_ttl(&env);
 
-        self::move_status_index(&env, &invoice_id, prev_status, InvoiceStatus::Repaid);
+        move_status_index(
+            &env,
+            &invoice_id,
+            InvoiceStatus::Confirmed,
+            InvoiceStatus::Repaid,
+        );
         events::invoice_repaid(&env, &invoice_id, updated.face_value);
         true
     }
@@ -1204,6 +1211,17 @@ impl InvoiceContract {
 
     fn extend_instance_ttl(env: &Env) {
         env.storage().instance().extend_ttl(100, 2_000_000);
+    }
+}
+
+/// Checks that an address is verified in the registry, panicking with the
+/// provided error if not.
+fn require_verified(env: &Env, registry_id: &Address, addr: &Address, err: InvoiceError) {
+    let mut args = Vec::new(env);
+    args.push_back(addr.clone().into_val(env));
+    let verified: bool = env.invoke_contract(registry_id, &Symbol::new(env, "is_verified"), args);
+    if !verified {
+        panic_with_error!(env, err);
     }
 }
 

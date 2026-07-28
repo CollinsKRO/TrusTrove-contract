@@ -2323,6 +2323,21 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "TotalLossRealised"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "u128": {
+                            "hi": 0,
+                            "lo": 9800000000
+                          }
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "TotalShares"
                             }
                           ]
@@ -3854,6 +3869,17 @@
                 },
                 {
                   "key": {
+                    "symbol": "total_loss_realised"
+                  },
+                  "val": {
+                    "u128": {
+                      "hi": 0,
+                      "lo": 0
+                    }
+                  }
+                },
+                {
+                  "key": {
                     "symbol": "total_shares"
                   },
                   "val": {
@@ -4287,6 +4313,17 @@
                     "u128": {
                       "hi": 0,
                       "lo": 0
+                    }
+                  }
+                },
+                {
+                  "key": {
+                    "symbol": "total_loss_realised"
+                  },
+                  "val": {
+                    "u128": {
+                      "hi": 0,
+                      "lo": 9800000000
                     }
                   }
                 },
