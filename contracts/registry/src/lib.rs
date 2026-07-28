@@ -209,6 +209,49 @@ impl RegistryContract {
         true
     }
 
+    /// Updates the metadata for an existing registered profile owned by
+    /// `address`.
+    ///
+    /// Both issuer and buyer profiles can be updated through this single
+    /// function — they share the same storage key (`DataKey::Profile`).
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `address` - The profile owner whose metadata should be replaced.
+    /// * `metadata` - The new metadata map for the profile.
+    ///
+    /// # Auth
+    /// * Requires `address.require_auth()` — only the profile owner may
+    ///   update their own metadata.
+    ///
+    /// # Panics
+    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds
+    ///   `MAX_METADATA_SIZE` entries or contains an empty key or value.
+    /// * `RegistryError::NotRegistered` if no profile exists for `address`.
+    ///
+    /// # Returns
+    /// * `bool` - `true` when the metadata is successfully updated.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let ok = client.update_profile(&issuer, &new_metadata);
+    /// ```
+    pub fn update_profile(env: Env, address: Address, metadata: Map<String, String>) -> bool {
+        Self::validate_metadata(&env, &metadata);
+        address.require_auth();
+        let key = DataKey::Profile(address.clone());
+        let mut profile: Profile = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotRegistered));
+        profile.metadata = metadata;
+        env.storage().persistent().set(&key, &profile);
+        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        events::profile_updated(&env, &address);
+        true
+    }
+
     /// Updates the metadata for an existing registered profile.
     ///
     /// # Arguments

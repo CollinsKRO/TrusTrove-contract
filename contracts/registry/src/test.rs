@@ -267,6 +267,111 @@ fn test_update_metadata_wrong_auth_panics() {
 }
 
 #[test]
+fn test_update_profile_happy_path() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    let metadata = map![
+        &env,
+        (
+            String::from_str(&env, "name"),
+            String::from_str(&env, "Acme Corp"),
+        )
+    ];
+    client.register_issuer(&issuer, &metadata);
+
+    let updated_metadata = map![
+        &env,
+        (
+            String::from_str(&env, "name"),
+            String::from_str(&env, "Acme LLC"),
+        ),
+        (
+            String::from_str(&env, "tax_id"),
+            String::from_str(&env, "12-3456789"),
+        ),
+    ];
+    let result = client.update_profile(&issuer, &updated_metadata);
+    assert!(result);
+
+    let profile = client.get_profile(&issuer);
+    assert_eq!(profile.metadata, updated_metadata);
+    assert_eq!(profile.role(), crate::Role::Issuer);
+    assert!(profile.verified());
+
+    assert_eq!(
+        env.events().all(),
+        vec![
+            &env,
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "issuer_registered"), issuer.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "profile_updated"), issuer.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
+        ]
+    );
+}
+
+#[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_update_profile_wrong_auth_panics() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, RegistryContract);
+    let client = RegistryContractClient::new(&env, &contract_id);
+
+    let issuer = Address::generate(&env);
+    let metadata = map![
+        &env,
+        (
+            String::from_str(&env, "name"),
+            String::from_str(&env, "Acme Corp"),
+        )
+    ];
+    let profile = Profile::new(
+        issuer.clone(),
+        Role::Issuer,
+        true,
+        env.ledger().timestamp(),
+        metadata,
+    );
+
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::Profile(issuer.clone()), &profile);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey::Profile(issuer.clone()), 100, 2_000_000);
+    });
+
+    let updated_metadata = map![
+        &env,
+        (
+            String::from_str(&env, "name"),
+            String::from_str(&env, "Bad Actor"),
+        )
+    ];
+    client.update_profile(&issuer, &updated_metadata);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #7)")]
+fn test_update_profile_unregistered_panics() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let unknown = Address::generate(&env);
+    let metadata = map![&env];
+    client.update_profile(&unknown, &metadata);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #2)")]
 fn test_duplicate_registration_panics() {
     let (env, client) = setup();
