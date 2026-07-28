@@ -1103,7 +1103,10 @@ fn test_set_expiry_window_emits_event() {
     let events = env.events().all();
     let (event_contract, topics, data) = events.last().expect("expected at least one event");
     assert_eq!(event_contract, contract_id);
-    assert_eq!(topics, (Symbol::new(&env, "expiry_window_set"),).into_val(&env));
+    assert_eq!(
+        topics,
+        (Symbol::new(&env, "expiry_window_set"),).into_val(&env)
+    );
     assert_eq!(u64::try_from_val(&env, &data).unwrap(), window);
 }
 
@@ -1165,8 +1168,9 @@ fn test_unique_invoice_ids_for_identical_inputs() {
     let events = env.events().all();
     assert!(events.len() >= 3, "expected at least three events");
 
-    let (event1_contract, event1_topics, event1_data) =
-        events.get(events.len() - 2).expect("expected penultimate event");
+    let (event1_contract, event1_topics, event1_data) = events
+        .get(events.len() - 2)
+        .expect("expected penultimate event");
     assert_eq!(event1_contract, contract_id);
     assert_eq!(
         event1_topics,
@@ -1181,8 +1185,7 @@ fn test_unique_invoice_ids_for_identical_inputs() {
     );
     assert_eq!(u128::try_from_val(&env, &event1_data).unwrap(), face_value);
 
-    let (event2_contract, event2_topics, event2_data) =
-        events.last().expect("expected last event");
+    let (event2_contract, event2_topics, event2_data) = events.last().expect("expected last event");
     assert_eq!(event2_contract, contract_id);
     assert_eq!(
         event2_topics,
