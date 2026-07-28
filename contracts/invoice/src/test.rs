@@ -6,10 +6,6 @@ use soroban_sdk::{
     IntoVal, Symbol, TryFromVal,
 };
 
-use proptest::prelude::ProptestConfig;
-use proptest::prelude::*;
-use proptest::test_runner::TestRunner;
-
 use crate::{InvoiceContract, InvoiceContractClient, InvoiceStatus};
 
 #[contract]
@@ -98,33 +94,6 @@ impl MockPool {
     }
 }
 
-#[contract]
-pub struct MockToken;
-
-#[contractimpl]
-impl MockToken {
-    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
-        let from_key = BalanceKey(from.clone());
-        let to_key = BalanceKey(to.clone());
-        let from_bal: i128 = env.storage().persistent().get(&from_key).unwrap_or(0);
-        let to_bal: i128 = env.storage().persistent().get(&to_key).unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&from_key, &(from_bal - amount));
-        env.storage().persistent().set(&to_key, &(to_bal + amount));
-    }
-
-    pub fn balance(env: Env, addr: Address) -> i128 {
-        env.storage()
-            .persistent()
-            .get(&BalanceKey(addr))
-            .unwrap_or(0)
-    }
-}
-
-#[contracttype]
-pub struct BalanceKey(Address);
-
 type Setup = (
     Env,
     InvoiceContractClient<'static>,
@@ -164,7 +133,7 @@ fn setup() -> Setup {
     client.initialize(&admin, &registry_id);
 
     let usdc_asset = env.register_contract(None, MockToken);
-    let buyer_bal_key = BalanceKey(buyer.clone());
+    let buyer_bal_key = TKey(buyer.clone());
     env.as_contract(&usdc_asset, || {
         env.storage()
             .persistent()
