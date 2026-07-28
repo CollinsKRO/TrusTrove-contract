@@ -349,7 +349,7 @@ fn test_release_to_issuer_invoice_contract_panics() {
 
 #[test]
 fn test_release_to_pool_transfers_correct_amount() {
-    let (env, client, _admin, pool, usdc_id, contract_id) = setup();
+    let (env, client, _admin, pool, _invoice_contract, usdc_id, contract_id) = setup();
     let invoice_id = generate_invoice_id(&env, 1);
     let amount: u128 = 1_000_000_000;
 
