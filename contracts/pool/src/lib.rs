@@ -15,6 +15,11 @@ pub use types::*;
 
 use ttl::{EXTEND_TO, THRESHOLD};
 
+/// Minimum initial deposit floor (1 USDC = 10_000_000 stroops).
+/// Prevents share-price griefing by requiring the initial deposit in an empty pool
+/// to be at least this floor.
+pub const MIN_INITIAL_DEPOSIT: u128 = 10_000_000;
+
 #[contract]
 pub struct PoolContract;
 
@@ -124,7 +129,7 @@ impl PoolContract {
     /// Requires self-authorization from `lp` (via `lp.require_auth()`).
     ///
     /// # Panics
-    /// * `InvalidAmount` if `usdc_amount` is zero.
+    /// * `InvalidAmount` if `usdc_amount` is zero or if initial deposit is below `MIN_INITIAL_DEPOSIT`.
     /// * `MinimumDeposit` if the deposit is too small to mint at least 1 share
     ///   at the current share price (prevents 0-share dust deposits).
     ///
@@ -133,7 +138,7 @@ impl PoolContract {
     ///
     /// # Example
     /// ```ignore
-    /// let shares = client.deposit(&lp, 1_000);
+    /// let shares = client.deposit(&lp, 10_000_000);
     /// ```
     pub fn deposit(env: Env, lp: Address, usdc_amount: u128) -> u128 {
         lp.require_auth();
@@ -147,6 +152,10 @@ impl PoolContract {
             .instance()
             .get(&DataKey::TotalDeposits)
             .unwrap();
+
+        if (total_shares == 0 || total_deposits == 0) && usdc_amount < MIN_INITIAL_DEPOSIT {
+            panic_with_error!(&env, PoolError::InvalidAmount);
+        }
 
         let shares_to_issue = if total_shares == 0 || total_deposits == 0 {
             usdc_amount
