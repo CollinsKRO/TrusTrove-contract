@@ -371,11 +371,29 @@ NEXT_PUBLIC_POOL_USDC_CONTRACT_ID=$POOL_USDC_ID
 NEXT_PUBLIC_POOL_XLM_CONTRACT_ID=$POOL_XLM_ID # EXPERIMENTAL
 EOF
 
+JSON_OUT="deployments.json"
+cat > "$JSON_OUT" <<EOF
+{
+  "registry": "$REGISTRY_ID",
+  "invoice": "$INVOICE_ID",
+  "escrow_usdc": "$ESCROW_USDC_ID",
+  "escrow_xlm": "$ESCROW_XLM_ID",
+  "pool_usdc": "$POOL_USDC_ID",
+  "pool_xlm": "$POOL_XLM_ID",
+  "updated_at": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+}
+EOF
+
+if [ -f "scripts/maintainer/update-readme-addresses.sh" ]; then
+  bash scripts/maintainer/update-readme-addresses.sh
+fi
+
 echo ""
 echo "==========================================="
 echo "Deployment complete."
 echo ""
 echo "Addresses saved to: $ADDRESSES_FILE"
+echo "JSON addresses saved to: $JSON_OUT"
 echo "Frontend env saved to: $ENV_OUT"
 echo ""
 echo "Add to trusttrove-app .env.local:"

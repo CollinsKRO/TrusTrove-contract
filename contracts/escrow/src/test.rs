@@ -73,7 +73,7 @@ fn setup() -> (
     let contract_id = env.register_contract(None, EscrowContract);
     let client = EscrowContractClient::new(&env, &contract_id);
 
-    client.initialize(&admin, &pool, &invoice_contract, &usdc_id);
+    client.initialize(&admin, &pool, &usdc_id);
 
     (
         env,
@@ -163,11 +163,10 @@ fn test_initialize() {
     env.mock_all_auths();
     let admin = Address::generate(&env);
     let pool = Address::generate(&env);
-    let invoice = Address::generate(&env);
     let usdc = env.register_contract(None, MockToken);
     let contract_id = env.register_contract(None, EscrowContract);
     let client = EscrowContractClient::new(&env, &contract_id);
-    client.initialize(&admin, &pool, &invoice, &usdc);
+    client.initialize(&admin, &pool, &usdc);
 
     assert_eq!(client.get_locked(&generate_invoice_id(&env, 1)), 0);
 }
@@ -179,20 +178,18 @@ fn test_initialize_twice_panics() {
     env.mock_all_auths();
     let admin = Address::generate(&env);
     let pool = Address::generate(&env);
-    let invoice = Address::generate(&env);
     let usdc = env.register_contract(None, MockToken);
     let contract_id = env.register_contract(None, EscrowContract);
     let client = EscrowContractClient::new(&env, &contract_id);
 
     // First initialize succeeds
-    client.initialize(&admin, &pool, &invoice, &usdc);
+    client.initialize(&admin, &pool, &usdc);
 
     // Second initialize must panic with AlreadyInitialized (Error #1)
     let admin2 = Address::generate(&env);
     let pool2 = Address::generate(&env);
-    let invoice2 = Address::generate(&env);
     let usdc2 = env.register_contract(None, MockToken);
-    client.initialize(&admin2, &pool2, &invoice2, &usdc2);
+    client.initialize(&admin2, &pool2, &usdc2);
 }
 
 // ============================================================================
@@ -313,34 +310,6 @@ fn test_release_to_issuer_pool_address_panics() {
 
     // Releasing to pool contract address must panic with InvalidRecipient (#7)
     client.release_to_issuer(&invoice_id, &pool);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #7)")]
-fn test_release_to_issuer_invoice_contract_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let pool = env.register_contract(None, MockCaller);
-    let invoice = Address::generate(&env);
-    let usdc_id = env.register_contract(None, MockToken);
-
-    let pool_bal_key = BalanceKey(pool.clone());
-    env.as_contract(&usdc_id, || {
-        env.storage()
-            .persistent()
-            .set(&pool_bal_key, &10_000_000_000_000i128);
-    });
-
-    let contract_id = env.register_contract(None, EscrowContract);
-    let client = EscrowContractClient::new(&env, &contract_id);
-    client.initialize(&admin, &pool, &invoice, &usdc_id);
-
-    let invoice_id = generate_invoice_id(&env, 8);
-    client.lock(&invoice_id, &1_000_000_000);
-
-    // Releasing to invoice contract address must panic with InvalidRecipient (#7)
-    client.release_to_issuer(&invoice_id, &invoice);
 }
 
 // ============================================================================

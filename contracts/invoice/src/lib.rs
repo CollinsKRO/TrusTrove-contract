@@ -207,6 +207,7 @@ impl InvoiceContract {
     /// * `InvoiceError::InvalidDueDateTooFar` if `due_date` exceeds
     ///   `now + MAX_INVOICE_LIFETIME_SECONDS` (~10 years).
     /// * `InvoiceError::CounterOverflow` if the internal invoice counter overflows.
+    /// * `InvoiceError::InvalidParticipants` if `issuer` and `buyer` are the same address.
     ///
     /// # Returns
     /// * `BytesN<32>` - The generated invoice ID.
@@ -224,6 +225,10 @@ impl InvoiceContract {
         funding_asset: Address,
     ) -> BytesN<32> {
         issuer.require_auth();
+
+        if issuer == buyer {
+            panic_with_error!(&env, InvoiceError::InvalidParticipants);
+        }
 
         let registry_id: Address = env
             .storage()
@@ -783,10 +788,12 @@ impl InvoiceContract {
     /// * `invoice_id` - The invoice to default.
     ///
     /// # Auth
-    /// Requires authorization from the stored admin address.
+    /// No authorization is required. Anyone may trigger a default once the due
+    /// date has passed. This removes the single-point-of-failure risk of an
+    /// admin-only gate and ensures LP loss recognition is timely.
     ///
     /// # Panics
-    /// * `InvoiceError::NotFound` if the admin, invoice, or funding pool cannot be found.
+    /// * `InvoiceError::NotFound` if the invoice or funding pool cannot be found.
     /// * `InvoiceError::InvalidStatusTransition` if invoice is not `Funded`, `Active`, or `Confirmed`.
     /// * `InvoiceError::DueDateNotPassed` if `now < due_date` — the due date
     ///   has not yet been reached.
@@ -799,13 +806,6 @@ impl InvoiceContract {
     /// client.trigger_default(&invoice_id);
     /// ```
     pub fn trigger_default(env: Env, invoice_id: BytesN<32>) -> bool {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
-        admin.require_auth();
-
         let inv_key = DataKey::Invoice(invoice_id.clone());
         let mut invoice: Invoice = env
             .storage()
@@ -841,6 +841,9 @@ impl InvoiceContract {
     }
 
     pub fn set_expiry_window(env: Env, window: u64) {
+        if window > 31_536_000u64 {
+            panic_with_error!(&env, InvoiceError::InvalidExpiryWindow);
+        }
         let admin: Address = env
             .storage()
             .instance()
