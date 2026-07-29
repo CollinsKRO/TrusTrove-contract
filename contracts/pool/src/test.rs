@@ -4,7 +4,7 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, testutils::Address as _, Address, BytesN, Env,
 };
 
-use crate::{DataKey, PoolContract, PoolContractClient};
+use crate::{DataKey, PoolContract, PoolContractClient, TTL_EXTEND_TO, TTL_THRESHOLD};
 
 use trusttrove_escrow::{EscrowContract as RealEscrow, EscrowContractClient as RealEscrowClient};
 use trusttrove_invoice::{
@@ -31,7 +31,7 @@ impl MockRegistry {
             .set(&RegKey(address.clone()), &true);
         env.storage()
             .persistent()
-            .extend_ttl(&RegKey(address), 100, 2_000_000);
+            .extend_ttl(&RegKey(address), TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 }
 

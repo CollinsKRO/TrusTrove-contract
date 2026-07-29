@@ -2,11 +2,13 @@
 
 use soroban_sdk::{contract, contractimpl, panic_with_error, token, Address, BytesN, Env, Vec};
 
+mod constants;
 mod errors;
 mod events;
 mod test;
 mod types;
 
+pub use constants::*;
 pub use errors::*;
 pub use types::*;
 
@@ -103,7 +105,9 @@ impl EscrowContract {
             locked_at: env.ledger().timestamp(),
         };
         env.storage().persistent().set(&key, &record);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::append_history(&env, &invoice_id, EscrowAction::Locked, amount);
         Self::extend_instance_ttl(&env);
         events::funds_locked(&env, &invoice_id, amount);
@@ -314,10 +318,14 @@ impl EscrowContract {
             timestamp: env.ledger().timestamp(),
         });
         env.storage().persistent().set(&key, &history);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     fn extend_instance_ttl(env: &Env) {
-        env.storage().instance().extend_ttl(100, 2_000_000);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 }

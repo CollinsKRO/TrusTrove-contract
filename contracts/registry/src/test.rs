@@ -1,6 +1,8 @@
 #![cfg(test)]
 
-use crate::{DataKey, Profile, RegistryContract, RegistryContractClient, Role};
+use crate::{
+    DataKey, Profile, RegistryContract, RegistryContractClient, Role, TTL_EXTEND_TO, TTL_THRESHOLD,
+};
 use soroban_sdk::{map, testutils::Address as _, vec, Address, Env, String, Vec};
 
 fn setup() -> (Env, RegistryContractClient<'static>) {
@@ -152,9 +154,11 @@ fn test_update_metadata_wrong_auth_panics() {
         env.storage()
             .persistent()
             .set(&DataKey::Profile(issuer.clone()), &profile);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Profile(issuer.clone()), 100, 2_000_000);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Profile(issuer.clone()),
+            TTL_THRESHOLD,
+            TTL_EXTEND_TO,
+        );
     });
 
     let updated_metadata = map![

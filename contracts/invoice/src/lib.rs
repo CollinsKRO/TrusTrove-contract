@@ -5,11 +5,13 @@ use soroban_sdk::{
     IntoVal, Map, String, Symbol, Vec,
 };
 
+mod constants;
 mod errors;
 mod events;
 mod test;
 mod types;
 
+pub use constants::*;
 pub use errors::*;
 pub use types::*;
 
@@ -196,7 +198,7 @@ impl InvoiceContract {
         env.storage().persistent().set(&inv_key, &invoice);
         env.storage()
             .persistent()
-            .extend_ttl(&inv_key, 100, 2_000_000);
+            .extend_ttl(&inv_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         self::extend_issuer_index(&env, &issuer, &invoice_id);
         self::extend_buyer_index(&env, &buyer, &invoice_id);
@@ -254,7 +256,7 @@ impl InvoiceContract {
         env.storage().persistent().set(&inv_key, &invoice);
         env.storage()
             .persistent()
-            .extend_ttl(&inv_key, 100, 2_000_000);
+            .extend_ttl(&inv_key, TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::extend_instance_ttl(&env);
 
         move_status_index(
@@ -317,7 +319,7 @@ impl InvoiceContract {
         env.storage().persistent().set(&inv_key, &invoice);
         env.storage()
             .persistent()
-            .extend_ttl(&inv_key, 100, 2_000_000);
+            .extend_ttl(&inv_key, TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::extend_instance_ttl(&env);
 
         move_status_index(
@@ -363,7 +365,7 @@ impl InvoiceContract {
         env.storage().persistent().set(&inv_key, &invoice);
         env.storage()
             .persistent()
-            .extend_ttl(&inv_key, 100, 2_000_000);
+            .extend_ttl(&inv_key, TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::extend_instance_ttl(&env);
 
         move_status_index(
@@ -439,7 +441,7 @@ impl InvoiceContract {
         env.storage().persistent().set(&inv_key, &invoice);
         env.storage()
             .persistent()
-            .extend_ttl(&inv_key, 100, 2_000_000);
+            .extend_ttl(&inv_key, TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::extend_instance_ttl(&env);
         events::delivery_confirmed(&env, &invoice_id, &confirmer);
         true
@@ -496,7 +498,7 @@ impl InvoiceContract {
         env.storage().persistent().set(&inv_key, &updated);
         env.storage()
             .persistent()
-            .extend_ttl(&inv_key, 100, 2_000_000);
+            .extend_ttl(&inv_key, TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::extend_instance_ttl(&env);
 
         move_status_index(
@@ -557,7 +559,7 @@ impl InvoiceContract {
         env.storage().persistent().set(&inv_key, &invoice);
         env.storage()
             .persistent()
-            .extend_ttl(&inv_key, 100, 2_000_000);
+            .extend_ttl(&inv_key, TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::extend_instance_ttl(&env);
 
         move_status_index(&env, &invoice_id, prev_status, InvoiceStatus::Defaulted);
@@ -939,7 +941,9 @@ impl InvoiceContract {
     }
 
     fn extend_instance_ttl(env: &Env) {
-        env.storage().instance().extend_ttl(100, 2_000_000);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 }
 
@@ -951,10 +955,10 @@ fn extend_issuer_index(env: &Env, issuer: &Address, invoice_id: &BytesN<32>) {
     env.storage().persistent().set(&count_key, &(count + 1));
     env.storage()
         .persistent()
-        .extend_ttl(&entry_key, 100, 2_000_000);
+        .extend_ttl(&entry_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     env.storage()
         .persistent()
-        .extend_ttl(&count_key, 100, 2_000_000);
+        .extend_ttl(&count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 fn extend_buyer_index(env: &Env, buyer: &Address, invoice_id: &BytesN<32>) {
@@ -965,10 +969,10 @@ fn extend_buyer_index(env: &Env, buyer: &Address, invoice_id: &BytesN<32>) {
     env.storage().persistent().set(&count_key, &(count + 1));
     env.storage()
         .persistent()
-        .extend_ttl(&entry_key, 100, 2_000_000);
+        .extend_ttl(&entry_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     env.storage()
         .persistent()
-        .extend_ttl(&count_key, 100, 2_000_000);
+        .extend_ttl(&count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 fn extend_status_index(env: &Env, status: InvoiceStatus, invoice_id: &BytesN<32>) {
@@ -980,10 +984,10 @@ fn extend_status_index(env: &Env, status: InvoiceStatus, invoice_id: &BytesN<32>
     env.storage().persistent().set(&count_key, &(count + 1));
     env.storage()
         .persistent()
-        .extend_ttl(&entry_key, 100, 2_000_000);
+        .extend_ttl(&entry_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     env.storage()
         .persistent()
-        .extend_ttl(&count_key, 100, 2_000_000);
+        .extend_ttl(&count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 fn move_status_index(env: &Env, invoice_id: &BytesN<32>, from: InvoiceStatus, to: InvoiceStatus) {

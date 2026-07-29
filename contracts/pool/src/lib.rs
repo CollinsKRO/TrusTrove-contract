@@ -4,10 +4,13 @@ use soroban_sdk::{
     contract, contractimpl, panic_with_error, token, Address, BytesN, Env, IntoVal, Symbol, Vec,
 };
 
+mod constants;
 mod errors;
 mod events;
 mod test;
 mod types;
+
+pub use constants::*;
 
 pub use errors::*;
 pub use types::*;
@@ -144,7 +147,7 @@ impl PoolContract {
             .set(&lp_shares_key, &(lp_shares + shares_to_issue));
         env.storage()
             .persistent()
-            .extend_ttl(&lp_shares_key, 100, 2_000_000);
+            .extend_ttl(&lp_shares_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         let lp_deposit_count_key = DataKey::LPDepositCount(lp.clone());
         let count: u32 = env
@@ -157,7 +160,7 @@ impl PoolContract {
             .set(&lp_deposit_count_key, &(count + 1));
         env.storage()
             .persistent()
-            .extend_ttl(&lp_deposit_count_key, 100, 2_000_000);
+            .extend_ttl(&lp_deposit_count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         let lp_init_key = DataKey::LPInitialDeposit(lp.clone());
         let init_dep: u128 = env.storage().persistent().get(&lp_init_key).unwrap_or(0);
@@ -166,7 +169,7 @@ impl PoolContract {
             .set(&lp_init_key, &(init_dep + usdc_amount));
         env.storage()
             .persistent()
-            .extend_ttl(&lp_init_key, 100, 2_000_000);
+            .extend_ttl(&lp_init_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         events::lp_deposited(&env, &lp, usdc_amount, shares_to_issue);
         Self::extend_instance_ttl(&env);
@@ -243,7 +246,7 @@ impl PoolContract {
             .set(&lp_shares_key, &(lp_shares - shares));
         env.storage()
             .persistent()
-            .extend_ttl(&lp_shares_key, 100, 2_000_000);
+            .extend_ttl(&lp_shares_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         let init_dep_key = DataKey::LPInitialDeposit(lp.clone());
         let init_dep: u128 = env.storage().persistent().get(&init_dep_key).unwrap_or(0);
@@ -255,7 +258,7 @@ impl PoolContract {
             env.storage().persistent().set(&init_dep_key, &new_init_dep);
             env.storage()
                 .persistent()
-                .extend_ttl(&init_dep_key, 100, 2_000_000);
+                .extend_ttl(&init_dep_key, TTL_THRESHOLD, TTL_EXTEND_TO);
         } else {
             env.storage().persistent().remove(&init_dep_key);
         }
@@ -267,7 +270,7 @@ impl PoolContract {
             .set(&yield_key, &(prev_yield + yield_earned));
         env.storage()
             .persistent()
-            .extend_ttl(&yield_key, 100, 2_000_000);
+            .extend_ttl(&yield_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         events::lp_withdrawn(&env, &lp, usdc_to_return, shares);
         Self::extend_instance_ttl(&env);
@@ -407,7 +410,7 @@ impl PoolContract {
         env.storage().persistent().set(&funded_key, &funded_amount);
         env.storage()
             .persistent()
-            .extend_ttl(&funded_key, 100, 2_000_000);
+            .extend_ttl(&funded_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         events::invoice_funded(&env, &invoice_id, funded_amount);
         Self::extend_instance_ttl(&env);
@@ -716,6 +719,8 @@ impl PoolContract {
     }
 
     fn extend_instance_ttl(env: &Env) {
-        env.storage().instance().extend_ttl(100, 2_000_000);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 }
