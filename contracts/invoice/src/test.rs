@@ -711,108 +711,24 @@ fn test_trigger_default_stranger_panics() {
     let usdc = Address::generate(&env);
     client.add_supported_asset(&usdc);
     let due_date = env.ledger().timestamp() + 86400;
-
-    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
-        address: &issuer,
-        invoke: &soroban_sdk::testutils::MockAuthInvoke {
-            contract: &contract_id,
-            fn_name: "create",
-            args: (
-                issuer.clone(),
-                buyer.clone(),
-                1_000_000_000u128,
-                due_date,
-                usdc.clone(),
-            )
-                .into_val(&env),
-            sub_invokes: &[],
-        },
-    }]);
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
-
-    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
-        address: &issuer,
-        invoke: &soroban_sdk::testutils::MockAuthInvoke {
-            contract: &contract_id,
-            fn_name: "list_for_financing",
-            args: (invoice_id.clone(), 200u32).into_val(&env),
-            sub_invokes: &[],
-        },
-    }]);
     client.list_for_financing(&invoice_id, &200);
 
     let pool_id = mock_pool_with_asset(&env, &usdc);
-
-    // Set pool contract (admin auth)
-    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
-        address: &admin,
-        invoke: &soroban_sdk::testutils::MockAuthInvoke {
-            contract: &contract_id,
-            fn_name: "set_pool_contract",
-            args: (pool_id.clone(),).into_val(&env),
-            sub_invokes: &[],
-        },
-    }]);
     client.set_pool_contract(&pool_id);
-
-    // mark_funded requires pool auth
-    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
-        address: &pool_id,
-        invoke: &soroban_sdk::testutils::MockAuthInvoke {
-            contract: &contract_id,
-            fn_name: "mark_funded",
-            args: (
-                invoice_id.clone(),
-                pool_id.clone(),
-                usdc.clone(),
-                980_000_000u128,
-            )
-                .into_val(&env),
-            sub_invokes: &[],
-        },
-    }]);
     client.mark_funded(&invoice_id, &pool_id, &usdc, &980_000_000);
-
-    // mark_shipped by issuer
-    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
-        address: &issuer,
-        invoke: &soroban_sdk::testutils::MockAuthInvoke {
-            contract: &contract_id,
-            fn_name: "mark_shipped",
-            args: (invoice_id.clone(),).into_val(&env),
-            sub_invokes: &[],
-        },
-    }]);
     client.mark_shipped(&invoice_id);
-
-    // confirm delivery by issuer and buyer
-    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
-        address: &issuer,
-        invoke: &soroban_sdk::testutils::MockAuthInvoke {
-            contract: &contract_id,
-            fn_name: "confirm_delivery",
-            args: (invoice_id.clone(), issuer.clone()).into_val(&env),
-            sub_invokes: &[],
-        },
-    }]);
     client.confirm_delivery(&invoice_id, &issuer);
-
-    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
-        address: &buyer,
-        invoke: &soroban_sdk::testutils::MockAuthInvoke {
-            contract: &contract_id,
-            fn_name: "confirm_delivery",
-            args: (invoice_id.clone(), buyer.clone()).into_val(&env),
-            sub_invokes: &[],
-        },
-    }]);
     client.confirm_delivery(&invoice_id, &buyer);
 
     // Fast forward past due date
     env.ledger().set_timestamp(due_date + 1);
 
-    // Now call trigger_default without mocking admin auth -> should panic with NotAuthorized
-    client.trigger_default(&invoice_id);
+    // A non-admin caller (stranger) — no additional auth needed — can successfully trigger default
+    // because the admin gate has been removed.
+    let result = client.trigger_default(&invoice_id);
+    assert!(result);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Defaulted);
 }
 
 // Note: `test_trigger_default_admin_succeeds_after_due_date_with_auth` was
@@ -1500,7 +1416,10 @@ fn test_repay_fails_no_auth() {
     let client = InvoiceContractClient::new(&env, &contract_id);
 
     let admin = Address::generate(&env);
+    let usdc = Address::generate(&env);
+    let due_date = env.ledger().timestamp() + 86400;
 
+    // Initialize as admin
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &admin,
         invoke: &soroban_sdk::testutils::MockAuthInvoke {
@@ -1512,9 +1431,7 @@ fn test_repay_fails_no_auth() {
     }]);
     client.initialize(&admin, &registry_id);
 
-    let usdc = Address::generate(&env);
     client.add_supported_asset(&usdc);
-    let due_date = env.ledger().timestamp() + 86400;
 
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &issuer,
@@ -2070,7 +1987,6 @@ fn test_create_fails_uninitialized_registry() {
 #[should_panic(expected = "Error(Contract, #2)")]
 fn test_create_fails_missing_counter() {
     let env = Env::default();
-    env.mock_all_auths();
 
     let registry_id = env.register_contract(None, MockRegistry);
     let registry_client = MockRegistryClient::new(&env, &registry_id);
@@ -2083,8 +1999,7 @@ fn test_create_fails_missing_counter() {
     let contract_id = env.register_contract(None, InvoiceContract);
     let client = InvoiceContractClient::new(&env, &contract_id);
 
-    let admin = Address::generate(&env);
-    client.initialize(&admin, &registry_id);
+    let _admin = Address::generate(&env);
 
     let usdc = Address::generate(&env);
     client.add_supported_asset(&usdc);
