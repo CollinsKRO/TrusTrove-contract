@@ -7,7 +7,10 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config as ProptestConfig, TestRunner};
 use soroban_sdk::{
     map,
-    testutils::{Address as _, Events as _, Ledger},
+    testutils::{
+        storage::{Instance as _, Persistent as _},
+        Address as _, Events as _, Ledger,
+    },
     vec, Address, Env, IntoVal, String, Symbol, Vec,
 };
 
@@ -1238,16 +1241,14 @@ fn test_get_profile_extends_ttl() {
 
     // Record the initial remaining TTL, then advance the ledger so the
     // remaining TTL drops below the write-path threshold (100 ledgers).
-    let ttl_before_drain: u32 = env.as_contract(&contract_id, || {
-        env.storage().persistent().get_ttl(&key)
-    });
+    let ttl_before_drain: u32 =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
     // Advance to leave ~50 ledgers remaining.
     env.ledger()
         .set_sequence_number(env.ledger().sequence() + ttl_before_drain - 50);
 
-    let ttl_before_read: u32 = env.as_contract(&contract_id, || {
-        env.storage().persistent().get_ttl(&key)
-    });
+    let ttl_before_read: u32 =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
     assert!(
         ttl_before_read < 100,
         "TTL should be below threshold before read, got {ttl_before_read}"
@@ -1257,9 +1258,8 @@ fn test_get_profile_extends_ttl() {
     let profile = client.get_profile(&issuer);
     assert!(profile.verified());
 
-    let ttl_after_read: u32 = env.as_contract(&contract_id, || {
-        env.storage().persistent().get_ttl(&key)
-    });
+    let ttl_after_read: u32 =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
 
     assert!(
         ttl_after_read > ttl_before_read,
@@ -1283,15 +1283,13 @@ fn test_is_verified_extends_ttl() {
     let key = DataKey::Profile(issuer.clone());
 
     // Drain TTL below the threshold (100).
-    let ttl_before_drain: u32 = env.as_contract(&contract_id, || {
-        env.storage().persistent().get_ttl(&key)
-    });
+    let ttl_before_drain: u32 =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
     env.ledger()
         .set_sequence_number(env.ledger().sequence() + ttl_before_drain - 50);
 
-    let ttl_before_read: u32 = env.as_contract(&contract_id, || {
-        env.storage().persistent().get_ttl(&key)
-    });
+    let ttl_before_read: u32 =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
     assert!(
         ttl_before_read < 100,
         "TTL should be below threshold before read, got {ttl_before_read}"
@@ -1300,9 +1298,8 @@ fn test_is_verified_extends_ttl() {
     // Call is_verified — this should extend the entry's TTL.
     assert!(client.is_verified(&issuer));
 
-    let ttl_after_read: u32 = env.as_contract(&contract_id, || {
-        env.storage().persistent().get_ttl(&key)
-    });
+    let ttl_after_read: u32 =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
 
     assert!(
         ttl_after_read > ttl_before_read,
@@ -1340,15 +1337,12 @@ fn test_get_admin_extends_instance_ttl() {
     let contract_id = client.address.clone();
 
     // Drain instance TTL below the threshold (100).
-    let ttl_before_drain: u32 = env.as_contract(&contract_id, || {
-        env.storage().instance().get_ttl()
-    });
+    let ttl_before_drain: u32 =
+        env.as_contract(&contract_id, || env.storage().instance().get_ttl());
     env.ledger()
         .set_sequence_number(env.ledger().sequence() + ttl_before_drain - 50);
 
-    let ttl_before_read: u32 = env.as_contract(&contract_id, || {
-        env.storage().instance().get_ttl()
-    });
+    let ttl_before_read: u32 = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
     assert!(
         ttl_before_read < 100,
         "Instance TTL should be below threshold before read, got {ttl_before_read}"
@@ -1357,9 +1351,7 @@ fn test_get_admin_extends_instance_ttl() {
     // Read the admin — this should extend the instance TTL.
     assert_eq!(client.get_admin(), admin);
 
-    let ttl_after_read: u32 = env.as_contract(&contract_id, || {
-        env.storage().instance().get_ttl()
-    });
+    let ttl_after_read: u32 = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
 
     assert!(
         ttl_after_read > ttl_before_read,

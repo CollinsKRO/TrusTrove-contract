@@ -317,9 +317,7 @@ impl RegistryContract {
             .persistent()
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
-        env.storage()
-            .persistent()
-            .extend_ttl(&key, 100, 2_000_000);
+        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
         profile
     }
 
@@ -353,9 +351,7 @@ impl RegistryContract {
         match env.storage().persistent().get::<_, Profile>(&key) {
             Some(profile) => {
                 let verified = profile.verified();
-                env.storage()
-                    .persistent()
-                    .extend_ttl(&key, 100, 2_000_000);
+                env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
                 verified
             }
             None => false,
@@ -550,9 +546,7 @@ impl RegistryContract {
             .instance()
             .get(&DataKey::Admin)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
-        env.storage()
-            .instance()
-            .extend_ttl(100, 2_000_000);
+        env.storage().instance().extend_ttl(100, 2_000_000);
         admin
     }
 }
