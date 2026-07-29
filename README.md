@@ -244,12 +244,16 @@ Invoice status: → Defaulted
 
 ## Deployed Contracts (Stellar Testnet)
 
+<!-- START_DEPLOYED_ADDRESSES -->
 | Contract | Address |
 |----------|---------|
 | registry_contract | `CABGWVIZFF62FG67ZGFEP67NEEY4WYTMFURDMFTKKNRDAFPKPOJDTN4C` |
 | invoice_contract | `CA4O3MR7LWHRSUDBNU6FY6UDFFYBN7TGBZXBDZB4OYYXFYXIFJ6RJF6B` |
 | escrow_contract | `CAJWGUKDTTC3SKN4RAAY72J4DVIIYSCFHX6GIMNTT22ABMISJK4GBCEH` |
 | pool_contract | `CAKEWH7SJCXGV2MH2WZYIX3QDPTSSBQFXYVYBOWAGLNBBZMPLE2US6CS` |
+<!-- END_DEPLOYED_ADDRESSES -->
+
+> **Note**: Testnet addresses are subject to rotation. See [DEPLOYMENT.md](./DEPLOYMENT.md#contract-address-lifecycle--rotation-policy) for our redeployment and lifecycle policy.
 
 Verify on [Stellar Expert Testnet](https://stellar.expert/explorer/testnet)
 
