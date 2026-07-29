@@ -554,6 +554,46 @@ fn test_handle_default_allows_at_grace_period_boundary() {
     assert_eq!(client.get_locked(&invoice_id), 0);
 }
 
+#[test]
+fn test_handle_default_second_call_returns_false_without_side_effects() {
+    let (env, client, _admin, pool, _invoice_contract, _usdc_id, _contract_id) = setup();
+    let invoice_id = generate_invoice_id(&env, 1);
+    let amount: u128 = 1_000_000_000;
+
+    // Lock funds and advance past grace period
+    client.lock(&invoice_id, &amount);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 60);
+
+    // First call: should succeed, remove the record, and emit default_resolved
+    let result1 = client.handle_default(&invoice_id, &pool);
+    assert!(result1);
+    assert_eq!(client.get_locked(&invoice_id), 0);
+    assert_last_event_three(
+        &env,
+        "default_resolved",
+        invoice_id.clone(),
+        pool.clone(),
+        amount,
+    );
+
+    // Capture event count after first (successful) call
+    let event_count_after_first = env.events().all().len();
+
+    // Second call: should return false with no side effects
+    let result2 = client.handle_default(&invoice_id, &pool);
+    assert!(!result2);
+
+    // Verify state is unchanged — get_locked still 0
+    assert_eq!(client.get_locked(&invoice_id), 0);
+
+    // Verify no new events were emitted by the second call
+    assert_eq!(
+        env.events().all().len(),
+        event_count_after_first,
+        "second handle_default must not emit any events"
+    );
+}
+
 // ============================================================================
 // Get Locked Tests
 // ============================================================================
