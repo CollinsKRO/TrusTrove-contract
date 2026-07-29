@@ -634,6 +634,65 @@ fn test_handle_default_unknown_invoice_returns_false() {
     assert!(!result);
 }
 
+// ============== FULL WITHDRAW RESET TESTS ==============
+
+#[test]
+fn test_full_withdraw_resets_lp_state() {
+    let te = setup();
+    te.pool.deposit(&te.lp, &10_000_000_000);
+
+    let pos_before = te.pool.get_lp_position(&te.lp);
+    assert_eq!(pos_before.deposit_count, 1);
+
+    // Full withdrawal
+    te.pool.withdraw(&te.lp, &10_000_000_000);
+
+    let pos_after = te.pool.get_lp_position(&te.lp);
+    assert_eq!(pos_after.shares, 0);
+    assert_eq!(pos_after.deposit_count, 0);
+
+    // LPInitialDeposit should be removed
+    let init_dep_key = DataKey::LPInitialDeposit(te.lp.clone());
+    let init_dep_after: Option<u128> = te.env.as_contract(&te.pool_id, || {
+        te.env.storage().persistent().get(&init_dep_key)
+    });
+    assert!(init_dep_after.is_none());
+
+    // LPDepositCount should be removed
+    let dep_count_key = DataKey::LPDepositCount(te.lp.clone());
+    let dep_count_after: Option<u32> = te.env.as_contract(&te.pool_id, || {
+        te.env.storage().persistent().get(&dep_count_key)
+    });
+    assert!(dep_count_after.is_none());
+}
+
+#[test]
+fn test_full_withdraw_then_deposit_yield_accounting() {
+    let te = setup();
+
+    // First deposit cycle
+    te.pool.deposit(&te.lp, &10_000_000_000);
+    fund_and_repay_invoice(&te);
+
+    // Full withdrawal with yield earned
+    let returned = te.pool.withdraw(&te.lp, &10_000_000_000);
+    assert_eq!(returned, 10_200_000_000); // principal + 200M yield
+
+    let pos = te.pool.get_lp_position(&te.lp);
+    assert_eq!(pos.shares, 0);
+    assert_eq!(pos.deposit_count, 0);
+    assert_eq!(pos.yield_earned, 200_000_000);
+
+    // Re-deposit — should start with fresh deposit count and initial deposit
+    let new_shares = te.pool.deposit(&te.lp, &5_000_000_000);
+    assert_eq!(new_shares, 5_000_000_000);
+
+    let pos2 = te.pool.get_lp_position(&te.lp);
+    assert_eq!(pos2.shares, 5_000_000_000);
+    assert_eq!(pos2.deposit_count, 1); // Reset to 1, not 2
+    assert_eq!(pos2.yield_earned, 200_000_000); // Previously earned yield preserved
+}
+
 #[test]
 fn test_deposit_when_deposits_zero_but_shares_exist() {
     let te = setup();
