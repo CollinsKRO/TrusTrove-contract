@@ -1044,18 +1044,11 @@ fn test_expire_listing_one_second_before_boundary_panics() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #15)")]
-fn test_expire_listing_overflow_panics() {
-    let (env, client, issuer, buyer, _, usdc) = setup();
-    env.ledger().set_timestamp(100);
-    let due_date = env.ledger().timestamp() + 86400;
-    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
-    client.list_for_financing(&invoice_id, &200);
-
-    // Set an expiry window that will overflow u64 when added to listed_at (100 + u64::MAX > u64::MAX)
-    client.set_expiry_window(&u64::MAX);
-
-    client.expire_listing(&invoice_id);
+#[should_panic(expected = "Error(Contract, #18)")]
+fn test_set_expiry_window_rejects_out_of_bounds() {
+    let (_env, client, _, _, _, _) = setup();
+    // Set an expiry window that exceeds the 365-day upper bound
+    client.set_expiry_window(&31_536_001);
 }
 
 #[test]
