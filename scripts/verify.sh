@@ -9,12 +9,13 @@ if [ ! -f "$STELLAR" ]; then
   STELLAR="stellar"
 fi
 
-# Load environment configuration (first checking .env, then falling back to .env.example)
-if [ -f .env ]; then
-  source .env
-else
-  source .env.example
+# Load environment configuration
+if [ ! -f .env ]; then
+  echo "Error: .env file not found." >&2
+  echo "Run ./scripts/deploy.sh first to create the .env file with contract IDs." >&2
+  exit 1
 fi
+source .env
 
 # Tracking execution status
 FAILED=0
@@ -25,7 +26,8 @@ check_env_var() {
   # Use indirect expansion to get value of var_name
   eval var_val=\$$var_name
   if [ -z "$var_val" ]; then
-    echo "Error: $var_name is not set or is empty."
+    echo "Error: $var_name is not set or is empty." >&2
+    echo "Run ./scripts/deploy.sh first to populate contract IDs." >&2
     FAILED=1
   fi
 }
@@ -40,7 +42,7 @@ check_env_var "ESCROW_USDC_CONTRACT_ID"
 check_env_var "ESCROW_XLM_CONTRACT_ID"
 
 if [ $FAILED -ne 0 ]; then
-  echo "Configuration check failed. Please ensure environment variables are populated."
+  echo "Configuration check failed. Run ./scripts/deploy.sh first to populate contract IDs." >&2
   exit 1
 fi
 
