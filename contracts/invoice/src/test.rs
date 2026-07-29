@@ -1422,10 +1422,11 @@ fn test_repay_fails_no_auth() {
     let contract_id = env.register_contract(None, InvoiceContract);
     let client = InvoiceContractClient::new(&env, &contract_id);
 
-    // Reset counter to create another invoice with same parameters (except counter)
-    // We need to verify that same issuer/buyer/value/date with different counter produces different IDs
-    let invoice_id_2 = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+    let admin = Address::generate(&env);
+    let usdc = Address::generate(&env);
+    let due_date = env.ledger().timestamp() + 86400;
 
+    // Initialize as admin
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &admin,
         invoke: &soroban_sdk::testutils::MockAuthInvoke {
@@ -1437,9 +1438,7 @@ fn test_repay_fails_no_auth() {
     }]);
     client.initialize(&admin, &registry_id);
 
-    let usdc = Address::generate(&env);
     client.add_supported_asset(&usdc);
-    let due_date = env.ledger().timestamp() + 86400;
 
     env.mock_auths(&[soroban_sdk::testutils::MockAuth {
         address: &issuer,
@@ -1915,6 +1914,7 @@ fn test_repay_from_repaid_rejected() {
     client.repay(&invoice_id);
 }
 
+<<<<<<< HEAD
 #[test]
 #[should_panic(expected = "Error(Contract, #8)")]
 fn test_repay_from_defaulted_rejected() {
@@ -2019,3 +2019,6 @@ fn test_create_fails_missing_counter() {
     let due_date = env.ledger().timestamp() + 86400;
     client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
 }
+=======
+
+>>>>>>> 0cae657 (fix(escrow): add Self:: prefix to usdc_client calls)
