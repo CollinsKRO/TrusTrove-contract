@@ -682,14 +682,15 @@ fn test_updated_max_utilization_reflected_in_stats() {
 #[should_panic(expected = "Error(Contract, #13)")]
 fn test_fund_invoice_rejects_utilization_overflow() {
     let te = setup();
-    // Deposit and also set TotalDeposits to u128::MAX so the
-    // `available = total_deposits - total_funded` subtraction does not
-    // underflow before we reach the utilization overflow check.
-    te.pool.deposit(&te.lp, &u128::MAX);
     let invoice_id = create_and_list(&te, &te.usdc_id);
-    // Artificially inflate total_funded so that new_total_funded * 10_000
-    // overflows u128, triggering PoolError::Overflow (#13).
+    // Set both TotalDeposits and TotalFunded near u128::MAX so that
+    // `available = total_deposits - total_funded` does not underflow,
+    // but `new_total_funded * 10_000` overflows in the utilization check.
     te.env.as_contract(&te.pool_id, || {
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalDeposits, &u128::MAX);
         te.env
             .storage()
             .instance()
