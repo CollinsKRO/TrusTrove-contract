@@ -108,6 +108,35 @@ fn test_revoke_sets_verified_false() {
 }
 
 #[test]
+fn test_revoke_already_revoked_returns_true_no_reemit() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    client.register_issuer(&issuer, &map![&env]);
+    assert!(client.is_verified(&issuer));
+
+    // First revoke — should succeed and set verified to false.
+    let result = client.revoke(&issuer);
+    assert!(result);
+    assert!(!client.is_verified(&issuer));
+    assert_eq!(
+        client.get_verification_status(&issuer),
+        VerificationStatus::Revoked
+    );
+
+    // Second revoke on already-revoked profile — should succeed
+    // without panic and without altering state.
+    let result2 = client.revoke(&issuer);
+    assert!(result2);
+    assert!(!client.is_verified(&issuer));
+    assert_eq!(
+        client.get_verification_status(&issuer),
+        VerificationStatus::Revoked
+    );
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #3)")]
 fn test_revoke_unregistered_panics() {
     let (env, client) = setup();
