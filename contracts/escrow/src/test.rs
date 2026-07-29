@@ -1,5 +1,12 @@
 #![cfg(test)]
 
+// Lint baseline (issue #252): every destructured `env` here is consumed by the
+// test body — see `generate_invoice_id(&env, …)`, `Address::generate(&env)`,
+// `env.ledger()`, `env.set_auths(&[])`, `assert_last_event_*(&env, …)`, or by
+// being returned through `setup_without_auths`. Renaming to `_env` would change
+// semantics; do not do so. `cargo clippy --workspace --all-targets -- -D warnings`
+// must remain clean.
+
 use soroban_sdk::{
     contract, contractimpl, contracttype,
     testutils::{Address as _, Events as _, Ledger},
