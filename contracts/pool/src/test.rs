@@ -679,6 +679,24 @@ fn test_updated_max_utilization_reflected_in_stats() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #13)")]
+fn test_fund_invoice_rejects_utilization_overflow() {
+    let te = setup();
+    te.pool.deposit(&te.lp, &1_000_000_000);
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+    // Artificially inflate total_funded so that new_total_funded * 10_000
+    // overflows u128, triggering PoolError::Overflow (#13).
+    te.env.as_contract(&te.pool_id, || {
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalFunded, &(u128::MAX / 10_000 + 1));
+    });
+
+    let _ = te.pool.fund_invoice(&invoice_id);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #12)")]
 fn test_fund_invoice_rejects_above_cap() {
     let te = setup();
