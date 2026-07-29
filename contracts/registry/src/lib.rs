@@ -411,6 +411,45 @@ impl RegistryContract {
         Self::extend_instance_ttl(&env);
     }
 
+    /// Transfers contract admin to a new address.
+    ///
+    /// Unlike `transfer_ownership`, this function only requires auth from the
+    /// current admin — the new admin does not need to sign. This is useful
+    /// for key rotation scenarios where the current admin key may be
+    /// compromised or needs to be rotated without the new key holder's
+    /// involvement.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `new_admin` - The address that will become the new contract admin.
+    ///
+    /// # Auth
+    /// * Requires `current_admin.require_auth()` — only the current stored
+    ///   contract admin may call this function.
+    ///
+    /// # Panics
+    /// * `RegistryError::NotFound` if the contract has not been initialized
+    ///   (no admin is stored under `DataKey::Admin`).
+    ///
+    /// # Returns
+    /// * `()` - No value is returned.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.transfer_admin(&new_admin);
+    /// ```
+    pub fn transfer_admin(env: Env, new_admin: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        events::admin_transferred(&env, &admin, &new_admin);
+        Self::extend_instance_ttl(&env);
+    }
+
     /// Returns the stored contract admin address.
     ///
     /// # Arguments
