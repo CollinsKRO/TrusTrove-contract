@@ -2011,3 +2011,11 @@ fn test_create_fails_missing_counter() {
     let due_date = env.ledger().timestamp() + 86400;
     client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
 }
+
+#[test]
+#[should_panic(expected = "Error(Contract, #19)")]
+fn test_create_fails_self_invoicing() {
+    let (env, client, issuer, _buyer, _registry, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    client.create(&issuer, &issuer, &1_000_000_000, &due_date, &usdc);
+}
