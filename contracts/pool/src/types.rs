@@ -30,6 +30,10 @@ pub struct PoolStats {
     /// Cumulative USDC (in stroops) of yield that has been distributed to
     /// the pool from repaid invoices over the pool's lifetime.
     pub total_yield_distributed: u128,
+    /// Cumulative USDC principal (in stroops) written off when funded
+    /// invoices default. This is lifetime accounting and is not reduced by
+    /// later deposits.
+    pub total_loss_realised: u128,
     /// Number of invoices currently funded and awaiting repayment.
     pub active_invoice_count: u32,
     /// Total supply of LP shares outstanding. Individual LP ownership of
@@ -70,6 +74,7 @@ pub enum DataKey {
     TotalDeposits,
     TotalFunded,
     TotalYieldDistributed,
+    TotalLossRealised,
     ActiveInvoiceCount,
     LPShares(Address),
     LPDepositCount(Address),
