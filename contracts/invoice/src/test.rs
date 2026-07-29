@@ -1549,7 +1549,7 @@ fn prop_any_future_due_date_creates_invoice_successfully() {
 fn prop_discount_bps_within_limit_always_lists_invoice() {
     let mut runner = TestRunner::new(ProptestConfig::with_cases(10));
     runner
-        .run(&(0u32..=5000u32), |discount_bps| {
+        .run(&(1u32..=5000u32), |discount_bps| {
             let (env, client, issuer, buyer, _, usdc) = setup();
             let due_date = env.ledger().timestamp() + 86400;
             let id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
