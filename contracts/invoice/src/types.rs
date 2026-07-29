@@ -95,6 +95,8 @@ pub enum DataKey {
     BuyerIndexEntry(Address, u32),
     StatusIndexEntry(u32, u32),
     ExpiryWindow,
+    SupportedAsset(Address),
+    SupportedAssetCount,
 }
 
 impl InvoiceStatus {

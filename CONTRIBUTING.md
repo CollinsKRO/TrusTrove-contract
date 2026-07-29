@@ -59,6 +59,18 @@ cargo test --workspace
 Add positive and negative tests where applicable. New public functions must include
 rustdoc for arguments, authorization, panics, and return values.
 
+CI also measures line coverage with [cargo-tarpaulin](https://github.com/xd009642/tarpaulin).
+It never fails the build on a coverage number, but you can reproduce the report
+locally to check that new code is exercised:
+
+```bash
+cargo install cargo-tarpaulin@0.32.7 --locked
+cargo tarpaulin --workspace --engine llvm --out html --output-dir coverage
+```
+
+Open `coverage/tarpaulin-report.html` to see which lines are uncovered. The same
+report is published as the `coverage-report` artifact on every CI run.
+
 ## Commit changes
 
 Use the conventional format already shown in the README:
