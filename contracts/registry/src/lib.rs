@@ -46,6 +46,7 @@ impl RegistryContract {
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
+        events::contract_initialized(&env, &admin);
         Self::extend_instance_ttl(&env);
     }
 

@@ -25,6 +25,10 @@ fn test_initialize() {
     let admin = Address::generate(&env);
     client.initialize(&admin);
     assert_eq!(client.get_admin(), admin);
+
+    // Assert the contract_initialized event was emitted
+    let all_events = env.events().all();
+    assert_eq!(all_events.len(), 1);
 }
 
 #[test]
@@ -237,6 +241,11 @@ fn test_reinstate_restores_verified_and_emits_event() {
             &env,
             (
                 client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
+            (
+                client.address.clone(),
                 (Symbol::new(&env, "issuer_registered"), issuer.clone()).into_val(&env),
                 ().into_val(&env),
             ),
@@ -419,6 +428,11 @@ fn test_update_profile_happy_path() {
             &env,
             (
                 client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
+            (
+                client.address.clone(),
                 (Symbol::new(&env, "issuer_registered"), issuer.clone()).into_val(&env),
                 ().into_val(&env),
             ),
@@ -539,6 +553,11 @@ fn test_register_issuer_then_buyer_panics() {
             &env,
             (
                 client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
+            (
+                client.address.clone(),
                 (Symbol::new(&env, "issuer_registered"), issuer.clone()).into_val(&env),
                 ().into_val(&env),
             ),
@@ -597,6 +616,11 @@ fn test_register_buyer_then_issuer_panics() {
         env.events().all(),
         vec![
             &env,
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
             (
                 client.address.clone(),
                 (Symbol::new(&env, "buyer_registered"), buyer.clone()).into_val(&env),
@@ -1184,6 +1208,11 @@ fn test_register_issuer_emits_event() {
             &env,
             (
                 client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
+            (
+                client.address.clone(),
                 (Symbol::new(&env, "issuer_registered"), issuer.clone()).into_val(&env),
                 ().into_val(&env),
             ),
@@ -1209,6 +1238,11 @@ fn test_register_buyer_emits_event() {
         env.events().all(),
         vec![
             &env,
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
             (
                 client.address.clone(),
                 (Symbol::new(&env, "buyer_registered"), buyer.clone()).into_val(&env),
@@ -1238,6 +1272,11 @@ fn test_revoke_emits_event() {
         env.events().all(),
         vec![
             &env,
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
             (
                 client.address.clone(),
                 (Symbol::new(&env, "issuer_registered"), issuer.clone()).into_val(&env),

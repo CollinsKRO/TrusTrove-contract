@@ -1,5 +1,12 @@
 use soroban_sdk::{Address, Env, Symbol};
 
+pub fn contract_initialized(env: &Env, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "contract_initialized"), admin.clone()),
+        (),
+    );
+}
+
 pub fn issuer_registered(env: &Env, address: &Address) {
     env.events()
         .publish((Symbol::new(env, "issuer_registered"), address.clone()), ());
