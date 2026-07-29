@@ -28,8 +28,13 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit@0.22.1
+
       - name: Audit dependencies (RUSTSEC)
-        run: cargo install cargo-audit@0.22.1 --locked && cargo audit
+        run: cargo audit
 
       - name: Check formatting
         run: cargo fmt --all --check
@@ -72,3 +77,53 @@ jobs:
           [ "$INVOICE" -le "$INVOICE_BUDGET" ] || exit 1
           [ "$ESCROW" -le "$ESCROW_BUDGET" ] || exit 1
           [ "$POOL" -le "$POOL_BUDGET" ] || exit 1
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-24.04
+    env:
+      # Exposed as env so the upload step can be skipped when the secret is
+      # absent (forks, or before the repo is onboarded to Codecov) — the
+      # secrets context is not available in a step-level `if`.
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.85.0
+          components: llvm-tools-preview
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: coverage
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin@0.32.7 --locked
+
+      - name: Run coverage
+        run: |
+          cargo tarpaulin --workspace \
+            --engine llvm \
+            --out lcov --out html --out xml \
+            --output-dir coverage \
+            --timeout 300
+
+      - name: Upload coverage report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload coverage to Codecov
+        if: env.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage/cobertura.xml
+          fail_ci_if_error: true

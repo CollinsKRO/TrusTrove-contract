@@ -31,3 +31,7 @@ coverage/
 .deployed-addresses
 .env.deployed
 deployments.json
+
+# Test snapshots (auto-generated)
+test_snapshots/
+contracts/*/test_snapshots/

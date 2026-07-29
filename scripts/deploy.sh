@@ -321,12 +321,12 @@ invoke_init "pool_usdc" "$POOL_USDC_ID" \
   --usdc_asset "$USDC_ISSUER"
 
 echo ""
-echo "=== Deploying XLM escrow_contract ==="
+echo "=== Deploying XLM escrow_contract (EXPERIMENTAL) ==="
 ESCROW_XLM_ID=$(deploy_contract "escrow_xlm" "target/wasm32v1-none/release/trusttrove_escrow.wasm")
 echo "XLM Escrow: $ESCROW_XLM_ID"
 
 echo ""
-echo "=== Deploying XLM pool_contract ==="
+echo "=== Deploying XLM pool_contract (EXPERIMENTAL) ==="
 POOL_XLM_ID=$(deploy_contract "pool_xlm" "target/wasm32v1-none/release/trusttrove_pool.wasm")
 echo "XLM Pool: $POOL_XLM_ID"
 
@@ -366,9 +366,9 @@ cat > "$ENV_OUT" <<EOF
 NEXT_PUBLIC_REGISTRY_CONTRACT_ID=$REGISTRY_ID
 NEXT_PUBLIC_INVOICE_CONTRACT_ID=$INVOICE_ID
 NEXT_PUBLIC_ESCROW_USDC_CONTRACT_ID=$ESCROW_USDC_ID
-NEXT_PUBLIC_ESCROW_XLM_CONTRACT_ID=$ESCROW_XLM_ID
+NEXT_PUBLIC_ESCROW_XLM_CONTRACT_ID=$ESCROW_XLM_ID # EXPERIMENTAL
 NEXT_PUBLIC_POOL_USDC_CONTRACT_ID=$POOL_USDC_ID
-NEXT_PUBLIC_POOL_XLM_CONTRACT_ID=$POOL_XLM_ID
+NEXT_PUBLIC_POOL_XLM_CONTRACT_ID=$POOL_XLM_ID # EXPERIMENTAL
 EOF
 
 JSON_OUT="deployments.json"
