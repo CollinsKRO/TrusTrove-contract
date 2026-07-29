@@ -841,6 +841,9 @@ impl InvoiceContract {
     }
 
     pub fn set_expiry_window(env: Env, window: u64) {
+        if window > 31_536_000u64 {
+            panic_with_error!(&env, InvoiceError::InvalidExpiryWindow);
+        }
         let admin: Address = env
             .storage()
             .instance()
