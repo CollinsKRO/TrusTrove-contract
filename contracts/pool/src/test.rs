@@ -1077,7 +1077,9 @@ fn test_handle_default_rejects_double_default() {
         .set_timestamp(te.env.ledger().timestamp() + 60);
 
     assert!(te.pool.handle_default(&invoice_id));
-    assert!(!te.pool.handle_default(&invoice_id));
+    // Second call should panic with InvoiceNotFound since the funded key was removed
+    let res = te.pool.try_handle_default(&invoice_id);
+    assert!(res.is_err());
 }
 
 #[test]
@@ -1096,16 +1098,11 @@ fn test_handle_default_requires_invoice_contract_authorization() {
 }
 
 #[test]
-fn test_handle_default_unknown_invoice_returns_false() {
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_handle_default_unknown_invoice_panics() {
     let te = setup();
     let dummy_id = BytesN::from_array(&te.env, &[0u8; 32]);
-    let before = te.pool.get_stats();
-    let result = te.pool.handle_default(&dummy_id);
-    assert!(!result);
-    assert_eq!(
-        te.pool.get_stats().total_loss_realised,
-        before.total_loss_realised
-    );
+    te.pool.handle_default(&dummy_id);
 }
 
 #[test]
