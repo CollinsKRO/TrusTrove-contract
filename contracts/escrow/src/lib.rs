@@ -17,6 +17,12 @@ pub struct EscrowContract;
 
 #[contractimpl]
 impl EscrowContract {
+    /// Get a token client for the USDC asset stored in the contract.
+    fn usdc_client(env: &Env) -> token::Client {
+        let usdc_id: Address = env.storage().instance().get(&DataKey::UsdcAsset).unwrap();
+        token::Client::new(env, &usdc_id)
+    }
+
     /// Initializes the escrow contract and stores required contract references.
     ///
     /// # Arguments
@@ -39,12 +45,6 @@ impl EscrowContract {
     /// ```ignore
     /// client.initialize(&admin, &pool, &invoice, &usdc);
     /// ```
-    /// Get a token client for the USDC asset stored in the contract.
-    fn usdc_client(env: &Env) -> token::Client {
-        let usdc_id: Address = env.storage().instance().get(&DataKey::UsdcAsset).unwrap();
-        token::Client::new(env, &usdc_id)
-    }
-
     pub fn initialize(
         env: Env,
         admin: Address,
