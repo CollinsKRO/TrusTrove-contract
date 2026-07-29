@@ -57,10 +57,10 @@ jobs:
           ls -lh target/wasm32v1-none/release/*.wasm 2>/dev/null || true
           echo ""
           echo "Checking against budget..."
-          REGISTRY=$(stat -c%s target/wasm32v1-none/release/trusttrove_registry.wasm 2>/dev/null || echo 0)
-          INVOICE=$(stat -c%s target/wasm32v1-none/release/trusttrove_invoice.wasm 2>/dev/null || echo 0)
-          ESCROW=$(stat -c%s target/wasm32v1-none/release/trusttrove_escrow.wasm 2>/dev/null || echo 0)
-          POOL=$(stat -c%s target/wasm32v1-none/release/trusttrove_pool.wasm 2>/dev/null || echo 0)
+          REGISTRY=$(wc -c < target/wasm32v1-none/release/trusttrove_registry.wasm 2>/dev/null || echo 0)
+          INVOICE=$(wc -c < target/wasm32v1-none/release/trusttrove_invoice.wasm 2>/dev/null || echo 0)
+          ESCROW=$(wc -c < target/wasm32v1-none/release/trusttrove_escrow.wasm 2>/dev/null || echo 0)
+          POOL=$(wc -c < target/wasm32v1-none/release/trusttrove_pool.wasm 2>/dev/null || echo 0)
 
           # Budget in bytes (adjust as needed; Soroban charges by size)
           REGISTRY_BUDGET=1048576  # 1 MB
