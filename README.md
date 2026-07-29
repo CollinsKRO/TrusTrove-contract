@@ -4,6 +4,8 @@
 
 <h1 align="center">TrusTrove — Smart Contracts</h1>
 
+
+
 <p align="center">
   Four Soroban smart contracts powering the TrusTrove trade finance protocol on Stellar.
 </p> 
@@ -73,7 +75,7 @@ revoke(address) → bool
 
 ### invoice_contract
 
-Manages the full invoice lifecycle. Enforces valid state transitions. Emits events consumed by the Go indexer.
+Manages the full invoice lifecycle. Enforces valid state transitions. [Emits events](./docs/EVENTS.md#invoice-contract) consumed by the Go indexer.
 
 ```
 Created → Listed → Funded → Active → Confirmed → Repaid
@@ -387,6 +389,7 @@ Detailed references for contributors and integrators:
 - [Threat Model](./docs/THREAT_MODEL.md) — trust assumptions, auth gates, attack vectors
 - [Storage Schema](./docs/STORAGE.md) — on-chain data layout, TTL patterns, gas estimates
 - [Limitations](./docs/LIMITATIONS.md) — testnet constraints, known gaps, unhandled edge cases
+- [Event Catalog](./docs/EVENTS.md) — every emitted event, topics, data schema, and emitting contract
 
 ### Key conventions
 
