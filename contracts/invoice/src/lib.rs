@@ -119,6 +119,67 @@ impl InvoiceContract {
         }
     }
 
+    pub fn add_supported_asset(env: Env, asset: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
+        admin.require_auth();
+
+        let key = DataKey::SupportedAsset(asset.clone());
+        if env.storage().persistent().has(&key) {
+            return;
+        }
+
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::SupportedAssetCount)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::SupportedAssetCount, &(count + 1));
+        env.storage().persistent().set(&key, &true);
+    }
+
+    pub fn remove_supported_asset(env: Env, asset: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
+        admin.require_auth();
+
+        let key = DataKey::SupportedAsset(asset.clone());
+        if !env.storage().persistent().has(&key) {
+            return;
+        }
+
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::SupportedAssetCount)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::SupportedAssetCount, &(count - 1));
+        env.storage().persistent().remove(&key);
+    }
+
+    pub fn is_supported_asset(env: Env, asset: Address) -> bool {
+        env.storage()
+            .persistent()
+            .has(&DataKey::SupportedAsset(asset))
+    }
+
+    pub fn get_supported_asset_count(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::SupportedAssetCount)
+            .unwrap_or(0)
+    }
+
     /// Creates a new invoice with the given issuer, buyer, and terms.
     ///
     /// # Arguments
@@ -172,6 +233,14 @@ impl InvoiceContract {
 
         require_verified(&env, &registry_id, &issuer, InvoiceError::IssuerNotVerified);
         require_verified(&env, &registry_id, &buyer, InvoiceError::BuyerNotVerified);
+
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::SupportedAsset(funding_asset.clone()))
+        {
+            panic_with_error!(&env, InvoiceError::UnsupportedAsset);
+        }
 
         if face_value == 0 {
             panic_with_error!(&env, InvoiceError::InvalidFaceValue);
@@ -636,6 +705,7 @@ impl InvoiceContract {
             .get(&inv_key)
             .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
         invoice.buyer.require_auth();
+        let _prev_status = invoice.status;
         if invoice.status != InvoiceStatus::Confirmed {
             panic_with_error!(&env, InvoiceError::InvalidStatusTransition);
         }
@@ -658,6 +728,7 @@ impl InvoiceContract {
             panic_with_error!(&env, InvoiceError::InvalidStatusTransition);
         }
 
+        let _prev_status = invoice.status;
         let term = invoice.due_date.saturating_sub(funded_at);
         let elapsed = now.saturating_sub(funded_at);
 
