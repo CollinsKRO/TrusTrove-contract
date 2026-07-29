@@ -209,6 +209,49 @@ impl RegistryContract {
         true
     }
 
+    /// Updates the metadata for an existing registered profile owned by
+    /// `address`.
+    ///
+    /// Both issuer and buyer profiles can be updated through this single
+    /// function — they share the same storage key (`DataKey::Profile`).
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `address` - The profile owner whose metadata should be replaced.
+    /// * `metadata` - The new metadata map for the profile.
+    ///
+    /// # Auth
+    /// * Requires `address.require_auth()` — only the profile owner may
+    ///   update their own metadata.
+    ///
+    /// # Panics
+    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds
+    ///   `MAX_METADATA_SIZE` entries or contains an empty key or value.
+    /// * `RegistryError::NotRegistered` if no profile exists for `address`.
+    ///
+    /// # Returns
+    /// * `bool` - `true` when the metadata is successfully updated.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let ok = client.update_profile(&issuer, &new_metadata);
+    /// ```
+    pub fn update_profile(env: Env, address: Address, metadata: Map<String, String>) -> bool {
+        Self::validate_metadata(&env, &metadata);
+        address.require_auth();
+        let key = DataKey::Profile(address.clone());
+        let mut profile: Profile = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotRegistered));
+        profile.metadata = metadata;
+        env.storage().persistent().set(&key, &profile);
+        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        events::profile_updated(&env, &address);
+        true
+    }
+
     /// Updates the metadata for an existing registered profile.
     ///
     /// # Arguments
@@ -357,6 +400,55 @@ impl RegistryContract {
         env.storage().persistent().set(&key, &profile);
         env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
         events::address_revoked(&env, &address);
+        Self::extend_instance_ttl(&env);
+        true
+    }
+
+    /// Reinstates verification for a previously revoked profile.
+    ///
+    /// This is the admin-only inverse of `revoke`: it flips the profile's
+    /// `verified` flag back to `true` and emits a dedicated
+    /// `address_reinstated` event so integrators can distinguish
+    /// reinstatement from a generic verification toggle.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `address` - The registered address whose verification should be
+    ///   reinstated.
+    ///
+    /// # Auth
+    /// * Requires `admin.require_auth()` — only the stored contract admin
+    ///   (read from `DataKey::Admin`) may reinstate a profile.
+    ///
+    /// # Panics
+    /// * `RegistryError::NotFound` if the contract admin is not set (contract
+    ///   was never initialized).
+    /// * `RegistryError::NotFound` if no profile is stored for `address`.
+    ///
+    /// # Returns
+    /// * `bool` - `true` when the profile is successfully reinstated.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let ok = client.reinstate(&issuer);
+    /// ```
+    pub fn reinstate(env: Env, address: Address) -> bool {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
+        admin.require_auth();
+        let key = DataKey::Profile(address.clone());
+        let mut profile: Profile = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
+        profile.set_verified(true);
+        env.storage().persistent().set(&key, &profile);
+        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        events::address_reinstated(&env, &address);
         Self::extend_instance_ttl(&env);
         true
     }
