@@ -24,6 +24,7 @@ struct PoolTotals {
     deposits: u128,
     funded: u128,
     yield_distributed: u128,
+    loss_realised: u128,
     active_invoices: u32,
     max_utilization_bps: u32,
 }
@@ -98,6 +99,9 @@ impl PoolContract {
         env.storage()
             .instance()
             .set(&DataKey::MaxUtilizationBps, &8500u32);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalLossRealised, &0u128);
         Self::extend_instance_ttl(&env);
     }
 
@@ -146,6 +150,9 @@ impl PoolContract {
     /// let shares = client.deposit(&lp, 1_000);
     /// ```
     pub fn deposit(env: Env, lp: Address, usdc_amount: u128) -> u128 {
+        if !env.storage().instance().has(&DataKey::Admin) {
+            panic_with_error!(&env, PoolError::NotInitialized);
+        }
         lp.require_auth();
         if usdc_amount == 0 {
             panic_with_error!(&env, PoolError::InvalidAmount);
@@ -243,6 +250,9 @@ impl PoolContract {
     /// let returned = client.withdraw(&lp, 500);
     /// ```
     pub fn withdraw(env: Env, lp: Address, shares: u128) -> u128 {
+        if !env.storage().instance().has(&DataKey::Admin) {
+            panic_with_error!(&env, PoolError::NotInitialized);
+        }
         lp.require_auth();
         if shares == 0 {
             panic_with_error!(&env, PoolError::InvalidAmount);
@@ -661,6 +671,7 @@ impl PoolContract {
         let totals = Self::totals(&env);
         let total_funded = totals.funded;
         let total_deposits = totals.deposits;
+        let total_loss_realised = totals.loss_realised;
 
         env.storage()
             .instance()
@@ -668,6 +679,10 @@ impl PoolContract {
         env.storage()
             .instance()
             .set(&DataKey::TotalDeposits, &(total_deposits - funded_amount));
+        env.storage().instance().set(
+            &DataKey::TotalLossRealised,
+            &(total_loss_realised + funded_amount),
+        );
 
         let active_count = totals.active_invoices;
         let new_active_count = active_count
@@ -676,6 +691,11 @@ impl PoolContract {
         env.storage()
             .instance()
             .set(&DataKey::ActiveInvoiceCount, &new_active_count);
+
+        let total_loss = totals.loss_realised;
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalLossRealised, &(total_loss + funded_amount));
 
         env.storage().persistent().remove(&funded_key);
 
@@ -693,9 +713,8 @@ impl PoolContract {
     /// No authorization is required.
     ///
     /// # Panics
+    /// * `NotInitialized` if the pool contract has not been initialized.
     /// * `Overflow` if scaling `total_funded` into basis points would overflow.
-    ///   All storage reads still default to `0` (or the initialization default
-    ///   of `8500` for `max_utilization_bps`).
     ///
     /// # Returns
     /// * `PoolStats` - The current pool statistics.
@@ -705,6 +724,9 @@ impl PoolContract {
     /// let stats = client.get_stats();
     /// ```
     pub fn get_stats(env: Env) -> PoolStats {
+        if Self::admin(&env).is_none() {
+            panic_with_error!(&env, PoolError::NotInitialized);
+        }
         let totals = Self::totals(&env);
         let total_deposits = totals.deposits;
         let total_funded = totals.funded;
@@ -717,6 +739,7 @@ impl PoolContract {
             available_liquidity: available,
             utilization_rate_bps: utilization,
             total_yield_distributed: totals.yield_distributed,
+            total_loss_realised: totals.loss_realised,
             active_invoice_count: totals.active_invoices,
             total_shares: totals.shares,
             max_utilization_bps: totals.max_utilization_bps,
@@ -876,6 +899,11 @@ impl PoolContract {
                 .storage()
                 .instance()
                 .get(&DataKey::TotalYieldDistributed)
+                .unwrap_or(0),
+            loss_realised: env
+                .storage()
+                .instance()
+                .get(&DataKey::TotalLossRealised)
                 .unwrap_or(0),
             active_invoices: env
                 .storage()
