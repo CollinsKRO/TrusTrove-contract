@@ -207,6 +207,7 @@ impl InvoiceContract {
     /// * `InvoiceError::InvalidDueDateTooFar` if `due_date` exceeds
     ///   `now + MAX_INVOICE_LIFETIME_SECONDS` (~10 years).
     /// * `InvoiceError::CounterOverflow` if the internal invoice counter overflows.
+    /// * `InvoiceError::InvalidParticipants` if `issuer` and `buyer` are the same address.
     ///
     /// # Returns
     /// * `BytesN<32>` - The generated invoice ID.
