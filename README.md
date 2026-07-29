@@ -4,6 +4,8 @@
 
 <h1 align="center">TrusTrove — Smart Contracts</h1>
 
+
+
 <p align="center">
   Four Soroban smart contracts powering the TrusTrove trade finance protocol on Stellar.
 </p> 
@@ -16,6 +18,9 @@
 <p align="center">
   <a href="https://github.com/TrusTrove/TrusTrove-contract/actions/workflows/ci.yml">
     <img src="https://img.shields.io/github/actions/workflow/status/TrusTrove/TrusTrove-contract/ci.yml?branch=main&label=build" />
+  </a>
+  <a href="https://codecov.io/gh/TrusTrove/TrusTrove-contract">
+    <img src="https://img.shields.io/codecov/c/github/TrusTrove/TrusTrove-contract?label=coverage" />
   </a>
   <img src="https://img.shields.io/badge/rust-1.85.0-orange" />
   <img src="https://img.shields.io/badge/soroban--sdk-21.7.6-blueviolet" />
@@ -73,7 +78,7 @@ revoke(address) → bool
 
 ### invoice_contract
 
-Manages the full invoice lifecycle. Enforces valid state transitions. Emits events consumed by the Go indexer.
+Manages the full invoice lifecycle. Enforces valid state transitions. [Emits events](./docs/EVENTS.md#invoice-contract) consumed by the Go indexer.
 
 ```
 Created → Listed → Funded → Active → Confirmed → Repaid
@@ -81,7 +86,7 @@ Created → Listed → Funded → Active → Confirmed → Repaid
 ```
 
 ```
-create(issuer, buyer, face_value, due_date) → invoice_id
+create(issuer, buyer, face_value, due_date, funding_asset) → invoice_id
 list_for_financing(invoice_id, discount_bps) → bool
 mark_funded(invoice_id, funded_amount) → bool   ← pool_contract only
 mark_shipped(invoice_id) → bool
@@ -244,12 +249,16 @@ Invoice status: → Defaulted
 
 ## Deployed Contracts (Stellar Testnet)
 
+<!-- START_DEPLOYED_ADDRESSES -->
 | Contract | Address |
 |----------|---------|
 | registry_contract | `CABGWVIZFF62FG67ZGFEP67NEEY4WYTMFURDMFTKKNRDAFPKPOJDTN4C` |
 | invoice_contract | `CA4O3MR7LWHRSUDBNU6FY6UDFFYBN7TGBZXBDZB4OYYXFYXIFJ6RJF6B` |
 | escrow_contract | `CAJWGUKDTTC3SKN4RAAY72J4DVIIYSCFHX6GIMNTT22ABMISJK4GBCEH` |
 | pool_contract | `CAKEWH7SJCXGV2MH2WZYIX3QDPTSSBQFXYVYBOWAGLNBBZMPLE2US6CS` |
+<!-- END_DEPLOYED_ADDRESSES -->
+
+> **Note**: Testnet addresses are subject to rotation. See [DEPLOYMENT.md](./DEPLOYMENT.md#contract-address-lifecycle--rotation-policy) for our redeployment and lifecycle policy.
 
 Verify on [Stellar Expert Testnet](https://stellar.expert/explorer/testnet)
 
@@ -361,6 +370,16 @@ The goal is LP-governed capital allocation:
 
 If you want to contribute to governance design, open an issue tagged `complexity:high` and link your proposal.
 
+### `trigger_default` is admin-gated, not time-based
+
+`invoice::trigger_default` requires `admin.require_auth()`. Although the on-chain eligibility check enforces `now >= due_date`, the function is **not** an automatic time-based trigger — an admin must explicitly call it. This creates a single point of control over declaring defaults.
+
+**Risk:** Delays or failure to call `trigger_default` in time prevents the pool from recovering funds via `escrow::handle_default`, which could harm LP returns. A compromised admin could also misuse this power.
+
+**Current design rationale:** A human-in-the-loop check before declaring a default prevents accidental defaults from clock drift, chain reorgs, or misconfigured automation. It also allows for off-chain negotiations (grace periods, extensions) before a default is formally recorded.
+
+**Roadmap:** Introduce a permissionless time-based default mechanism where any caller can trigger a default for an invoice past its `due_date + grace_period`, without requiring admin authorization. The admin would retain only an override capability (e.g., to halt a false default).
+
 ### No emergency pause mechanism
 
 There is currently no circuit breaker. If a critical bug is found post-deployment the only recourse is to stop directing traffic to the affected contracts via the frontend.
@@ -387,6 +406,7 @@ Detailed references for contributors and integrators:
 - [Threat Model](./docs/THREAT_MODEL.md) — trust assumptions, auth gates, attack vectors
 - [Storage Schema](./docs/STORAGE.md) — on-chain data layout, TTL patterns, gas estimates
 - [Limitations](./docs/LIMITATIONS.md) — testnet constraints, known gaps, unhandled edge cases
+- [Event Catalog](./docs/EVENTS.md) — every emitted event, topics, data schema, and emitting contract
 
 ### Key conventions
 

@@ -4,6 +4,7 @@
 # Usage:
 #   powershell ./scripts/deploy.ps1              # Normal deploy (skips already-deployed contracts)
 #   powershell ./scripts/deploy.ps1 -Fresh        # Ignore saved addresses and redeploy everything
+#   powershell ./scripts/deploy.ps1 -DryRun       # Show what would be deployed without actually deploying
 #   powershell ./scripts/deploy.ps1 -Help         # Show this help
 #
 # Deployed addresses are persisted to .deployed-addresses after each successful
@@ -18,11 +19,13 @@ $ErrorActionPreference = 'Stop'
 
 $fresh = $false
 $resume = $false
+$dryRun = $false
 
 foreach ($arg in $args) {
     switch -Wildcard ($arg) {
         '-fresh'    { $fresh = $true }
         '-resume'   { $resume = $true }
+        '-dryrun'   { $dryRun = $true }
         '-help'     { Write-Host "deploy.ps1 — Idempotent deployment script for TrusTrove contracts"; exit 0 }
         '-h'        { Write-Host "deploy.ps1 — Idempotent deployment script for TrusTrove contracts"; exit 0 }
         default     { Write-Host "Unknown argument: $arg  (use -Help for usage)"; exit 1 }
@@ -142,6 +145,11 @@ function Deploy-Contract {
         return $existing
     }
 
+    if ($dryRun) {
+        Write-Host "  [DRY-RUN] Would deploy $key from $wasm"
+        return "<dry-run>"
+    }
+
     if (-not (Test-Path $wasm)) {
         Write-Host "ERROR: WASM file not found: $wasm"
         Write-Host "       Run 'stellar contract build' first, or check the build output."
@@ -180,6 +188,11 @@ function Invoke-Init {
     $existing = Load-Address $initKey
     if ($existing) {
         Write-Host "  $label already initialized — skipping."
+        return
+    }
+
+    if ($dryRun) {
+        Write-Host "  [DRY-RUN] Would initialize $label ($contractId) with: $($initArgs -join ' ')"
         return
     }
 
@@ -230,14 +243,19 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "  Deployer address : $deployerAddress"
 Write-Host "  Addresses file   : $addressesFile"
 Write-Host "  Fresh deploy     : $fresh"
+Write-Host "  Dry-run mode     : $dryRun"
 Write-Host ""
 
 # ---------------------------------------------------------------------------
 # 6. Build
 # ---------------------------------------------------------------------------
 
-Write-Host "=== Building all contracts ==="
-& $stellar contract build
+if ($dryRun) {
+    Write-Host "=== [DRY-RUN] Skipping build ==="
+} else {
+    Write-Host "=== Building all contracts ==="
+    & $stellar contract build
+}
 Write-Host ""
 
 # ---------------------------------------------------------------------------
@@ -268,11 +286,11 @@ Invoke-Init "escrow_usdc" $escrowUsdcId @("--", "initialize", "--admin", $deploy
 
 Invoke-Init "pool_usdc" $poolUsdcId @("--", "initialize", "--admin", $deployerAddress, "--invoice_contract", $invoiceId, "--escrow_contract", $escrowUsdcId, "--usdc_asset", $usdcIssuer)
 
-Write-Host "`n=== Deploying XLM escrow_contract ==="
+Write-Host "`n=== Deploying XLM escrow_contract (EXPERIMENTAL) ==="
 $escrowXlmId = Deploy-Contract "escrow_xlm" "target/wasm32v1-none/release/trusttrove_escrow.wasm"
 Write-Host "XLM Escrow: $escrowXlmId"
 
-Write-Host "`n=== Deploying XLM pool_contract ==="
+Write-Host "`n=== Deploying XLM pool_contract (EXPERIMENTAL) ==="
 $poolXlmId = Deploy-Contract "pool_xlm" "target/wasm32v1-none/release/trusttrove_pool.wasm"
 Write-Host "XLM Pool: $poolXlmId"
 
@@ -287,6 +305,9 @@ Invoke-Init "invoice_set_pool" $invoiceId @("--", "set_pool_contract", "--pool_c
 # 8. Persist final addresses
 # ---------------------------------------------------------------------------
 
+if ($dryRun) {
+    Write-Host "=== [DRY-RUN] Skipping .env.deployed generation ==="
+} else {
 $envOut = ".env.deployed"
 $timestamp = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')
 @"
@@ -296,9 +317,9 @@ $timestamp = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')
 NEXT_PUBLIC_REGISTRY_CONTRACT_ID=$registryId
 NEXT_PUBLIC_INVOICE_CONTRACT_ID=$invoiceId
 NEXT_PUBLIC_ESCROW_USDC_CONTRACT_ID=$escrowUsdcId
-NEXT_PUBLIC_ESCROW_XLM_CONTRACT_ID=$escrowXlmId
+NEXT_PUBLIC_ESCROW_XLM_CONTRACT_ID=$escrowXlmId # EXPERIMENTAL
 NEXT_PUBLIC_POOL_USDC_CONTRACT_ID=$poolUsdcId
-NEXT_PUBLIC_POOL_XLM_CONTRACT_ID=$poolXlmId
+NEXT_PUBLIC_POOL_XLM_CONTRACT_ID=$poolXlmId # EXPERIMENTAL
 "@ | Set-Content $envOut
 
 Write-Host "`n==========================================="
@@ -311,3 +332,4 @@ Write-Host "Add to trusttrove-app .env.local:"
 Write-Host ""
 Get-Content $envOut | ForEach-Object { Write-Host $_ }
 Write-Host "==========================================="
+}
