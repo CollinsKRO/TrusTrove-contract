@@ -1914,7 +1914,6 @@ fn test_repay_from_repaid_rejected() {
     client.repay(&invoice_id);
 }
 
-<<<<<<< HEAD
 #[test]
 #[should_panic(expected = "Error(Contract, #8)")]
 fn test_repay_from_defaulted_rejected() {
@@ -2007,7 +2006,7 @@ fn test_create_fails_missing_counter() {
     let contract_id = env.register_contract(None, InvoiceContract);
     let client = InvoiceContractClient::new(&env, &contract_id);
 
-    let admin = Address::generate(&env);
+    let _admin = Address::generate(&env);
 
     let usdc = Address::generate(&env);
     client.add_supported_asset(&usdc);
@@ -2019,6 +2018,3 @@ fn test_create_fails_missing_counter() {
     let due_date = env.ledger().timestamp() + 86400;
     client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
 }
-=======
-
->>>>>>> 0cae657 (fix(escrow): add Self:: prefix to usdc_client calls)
