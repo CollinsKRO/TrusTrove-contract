@@ -23,7 +23,7 @@ Copy `.env.example` to `.env` and fill in:
 |----------|-------------|
 | `DEPLOYER_ACCOUNT` | Key alias for the deployer (default: `deployer`) |
 | `USDC_ISSUER` | Stellar address of the USDC issuer on testnet |
-| `XLM_ASSET` | XLM asset contract address (or native) |
+| `XLM_ASSET` | XLM asset contract address (or native) - EXPERIMENTAL/INCOMPLETE |
 
 ## Testnet Deployment
 
@@ -83,10 +83,10 @@ because each contract references others:
 4. pool_contract (USDC)
    └─ needs: invoice_contract, escrow_contract, USDC asset
 
-5. escrow_contract (XLM)
+5. escrow_contract (XLM) [EXPERIMENTAL]
    └─ needs: pool_contract, invoice_contract, XLM asset
 
-6. pool_contract (XLM)
+6. pool_contract (XLM) [EXPERIMENTAL]
    └─ needs: invoice_contract, escrow_contract, XLM asset
 
 7. Wire pool into invoice
@@ -130,8 +130,8 @@ registry=<CONTRACT_ID>
 invoice=<CONTRACT_ID>
 escrow_usdc=<CONTRACT_ID>
 pool_usdc=<CONTRACT_ID>
-escrow_xlm=<CONTRACT_ID>
-pool_xlm=<CONTRACT_ID>
+escrow_xlm=<CONTRACT_ID> (EXPERIMENTAL)
+pool_xlm=<CONTRACT_ID> (EXPERIMENTAL)
 ```
 
 The `--fresh` flag removes this file and starts clean.
