@@ -46,6 +46,7 @@ impl RegistryContract {
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
+        events::contract_initialized(&env, &admin);
         Self::extend_instance_ttl(&env);
     }
 
@@ -289,6 +290,10 @@ impl RegistryContract {
 
     /// Retrieves a registered profile by address.
     ///
+    /// Reads the profile entry from persistent storage, extends its TTL using
+    /// the same threshold and target duration as the write path, and returns
+    /// the stored value.
+    ///
     /// # Arguments
     /// * `env` - The Soroban environment.
     /// * `address` - The address of the profile to retrieve.
@@ -307,16 +312,22 @@ impl RegistryContract {
     /// let profile = client.get_profile(&issuer);
     /// ```
     pub fn get_profile(env: Env, address: Address) -> Profile {
-        env.storage()
+        let key = DataKey::Profile(address.clone());
+        let profile = env
+            .storage()
             .persistent()
-            .get(&DataKey::Profile(address.clone()))
-            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound))
+            .get(&key)
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
+        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        profile
     }
 
     /// Checks whether a registered profile is verified.
     ///
     /// Returns `false` for addresses that have never been registered as well
-    /// as for addresses whose profile has had verification revoked.
+    /// as for addresses whose profile has had verification revoked. When the
+    /// entry exists, its TTL is extended using the same threshold and target
+    /// duration as the write path.
     ///
     /// # Arguments
     /// * `env` - The Soroban environment.
@@ -337,11 +348,15 @@ impl RegistryContract {
     /// let verified = client.is_verified(&issuer);
     /// ```
     pub fn is_verified(env: Env, address: Address) -> bool {
-        env.storage()
-            .persistent()
-            .get::<_, Profile>(&DataKey::Profile(address))
-            .map(|p| p.verified())
-            .unwrap_or(false)
+        let key = DataKey::Profile(address);
+        match env.storage().persistent().get::<_, Profile>(&key) {
+            Some(profile) => {
+                let verified = profile.verified();
+                env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+                verified
+            }
+            None => false,
+        }
     }
 
     pub fn get_verification_status(env: Env, address: Address) -> VerificationStatus {
@@ -356,32 +371,29 @@ impl RegistryContract {
         }
     }
 
-    /// Revokes verification for a registered profile.
+    /// Revokes a registered profile by setting its verification status to `false`.
     ///
-    /// Loads the profile, flips its verified flag to `false`, persists the
-    /// change (extending the profile's TTL), and emits an `address_revoked`
-    /// event.
+    /// This function is idempotent: calling it on an already-revoked profile
+    /// returns `true` without re-emitting the `address_revoked` event or
+    /// rewriting storage.
     ///
     /// # Arguments
     /// * `env` - The Soroban environment.
-    /// * `address` - The registered address whose verification should be
-    ///   revoked.
+    /// * `address` - The address of the profile to revoke.
     ///
     /// # Auth
-    /// * Requires `admin.require_auth()` — only the stored contract admin
-    ///   (read from `DataKey::Admin`) may revoke a profile.
-    ///
-    /// # Panics
-    /// * `RegistryError::NotFound` if the contract admin is not set (contract
-    ///   was never initialized).
-    /// * `RegistryError::NotFound` if no profile is stored for `address`.
+    /// * Requires admin authorization (the stored admin from `DataKey::Admin`).
     ///
     /// # Returns
-    /// * `bool` - `true` when the profile is successfully marked as revoked.
+    /// * `true` if the profile is now in revoked state (including if it was
+    ///   already revoked).
+    ///
+    /// # Panics
+    /// * `NotFound` if the address is not registered.
     ///
     /// # Example
     /// ```ignore
-    /// let ok = client.revoke(&issuer);
+    /// let result = client.revoke(&issuer);
     /// ```
     pub fn revoke(env: Env, address: Address) -> bool {
         let admin: Address = env
@@ -396,6 +408,9 @@ impl RegistryContract {
             .persistent()
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
+        if !profile.verified() {
+            return true;
+        }
         profile.set_verified(false);
         env.storage().persistent().set(&key, &profile);
         env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
@@ -505,6 +520,10 @@ impl RegistryContract {
 
     /// Returns the stored contract admin address.
     ///
+    /// Reads the admin entry from instance storage, extends its TTL using
+    /// the same threshold and target duration as the write path, and returns
+    /// the stored value.
+    ///
     /// # Arguments
     /// * `env` - The Soroban environment.
     ///
@@ -523,10 +542,14 @@ impl RegistryContract {
     /// let admin = client.get_admin();
     /// ```
     pub fn get_admin(env: Env) -> Address {
-        env.storage()
+        let admin = env
+            .storage()
             .instance()
             .get(&DataKey::Admin)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotInitialized))
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
+        env.storage().instance().extend_ttl(100, 2_000_000);
+        admin
     }
 }
 
