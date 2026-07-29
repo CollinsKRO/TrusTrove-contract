@@ -521,7 +521,13 @@ fn test_fund_invoice_unlisted_invoice_panics() {
     let te = setup();
     te.pool.deposit(&te.lp, &100_000_000_000);
     let due_date = te.env.ledger().timestamp() + 86400;
-    let invoice_id = te.invoice.create(&te.issuer, &te.buyer, &1_000_000_000, &due_date, &te.usdc_id);
+    let invoice_id = te.invoice.create(
+        &te.issuer,
+        &te.buyer,
+        &1_000_000_000,
+        &due_date,
+        &te.usdc_id,
+    );
     // Do NOT list the invoice — status is Created (0)
     te.pool.fund_invoice(&invoice_id);
 }
