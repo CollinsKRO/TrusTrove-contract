@@ -20,4 +20,5 @@ pub enum InvoiceError {
     InvalidAmount = 16,
     CounterOverflow = 17,
     InvalidExpiryWindow = 18,
+    InvalidParticipants = 19,
 }
