@@ -2215,7 +2215,7 @@ fn test_create_indexes_emit_invoice_created_event() {
     let face_value: u128 = 1_000_000_000;
     let due_date = env.ledger().timestamp() + 86400;
 
-    let invoice_id = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+    client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
 
     let contract_id = client.address;
     let events = env.events().all();
