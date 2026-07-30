@@ -90,10 +90,10 @@ impl RegistryContract {
         {
             panic_with_error!(&env, RegistryError::AlreadyRegistered);
         }
-        let profile = Profile::new(
+        let profile =         Profile::new(
             address.clone(),
             Role::Issuer,
-            true,
+            false,
             env.ledger().timestamp(),
             metadata,
         );
@@ -136,7 +136,7 @@ impl RegistryContract {
             let profile = Profile::new(
                 address.clone(),
                 Role::Issuer,
-                true,
+                false,
                 env.ledger().timestamp(),
                 metadata,
             );
@@ -198,7 +198,7 @@ impl RegistryContract {
         let profile = Profile::new(
             address.clone(),
             Role::Buyer,
-            true,
+            false,
             env.ledger().timestamp(),
             metadata,
         );
@@ -353,7 +353,8 @@ impl RegistryContract {
         {
             None => VerificationStatus::Unregistered,
             Some(p) if p.verified() => VerificationStatus::Verified,
-            Some(_) => VerificationStatus::Revoked,
+            Some(p) if p.revoked() => VerificationStatus::Revoked,
+            Some(_) => VerificationStatus::Pending,
         }
     }
 
@@ -398,6 +399,7 @@ impl RegistryContract {
             return true;
         }
         profile.set_verified(false);
+        profile.set_revoked(true);
         env.storage().persistent().set(&key, &profile);
         env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
         events::address_revoked(&env, &address);
@@ -447,6 +449,7 @@ impl RegistryContract {
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
         profile.set_verified(true);
+        profile.set_revoked(false);
         env.storage().persistent().set(&key, &profile);
         env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
         events::address_reinstated(&env, &address);
@@ -468,6 +471,11 @@ impl RegistryContract {
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
         profile.set_verified(verify);
+        if verify {
+            profile.set_revoked(false);
+        } else {
+            profile.set_revoked(true);
+        }
         env.storage().persistent().set(&key, &profile);
         env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
         events::profile_verified(&env, &address, verify);
