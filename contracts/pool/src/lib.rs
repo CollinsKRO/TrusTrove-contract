@@ -242,6 +242,12 @@ impl PoolContract {
     /// * `InsufficientShares` if the LP does not own enough shares.
     /// * `InsufficientLiquidity` if the pool lacks enough available USDC.
     ///
+    /// # Notes
+    /// On full withdrawal (remaining shares reach zero), `LPInitialDeposit`
+    /// and `LPDepositCount` are removed from storage. This ensures a
+    /// subsequent re-deposit starts with a fresh initial-deposit basis
+    /// and an accurate deposit count.
+    ///
     /// # Returns
     /// * `u128` - The amount of USDC returned.
     ///
@@ -294,12 +300,21 @@ impl PoolContract {
             .instance()
             .set(&DataKey::TotalDeposits, &(total_deposits - usdc_to_return));
 
+        let remaining_shares = lp_shares - shares;
         env.storage()
             .persistent()
-            .set(&lp_shares_key, &(lp_shares - shares));
+            .set(&lp_shares_key, &remaining_shares);
         env.storage()
             .persistent()
             .extend_ttl(&lp_shares_key, THRESHOLD, EXTEND_TO);
+
+        if remaining_shares == 0 {
+            // Full withdrawal: reset LP-scoped storage to prevent stale state
+            // on re-deposit. LPInitialDeposit is zeroed below via the
+            // principal_portion calculation; LPDepositCount must be removed too.
+            let dep_count_key = DataKey::LPDepositCount(lp.clone());
+            env.storage().persistent().remove(&dep_count_key);
+        }
 
         let init_dep_key = DataKey::LPInitialDeposit(lp.clone());
         let init_dep: u128 = env.storage().persistent().get(&init_dep_key).unwrap_or(0);
