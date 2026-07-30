@@ -639,11 +639,12 @@ impl PoolContract {
     /// invoke this entry point.
     ///
     /// # Panics
+    /// * `InvoiceNotFound` if no funded invoice entry exists for `invoice_id`.
     /// * `ActiveCountUnderflow` if the active-invoice counter would underflow
     ///   (e.g. double-default of the same invoice).
     ///
     /// # Returns
-    /// * `bool` - `true` when default handling completes, `false` if invoice is not funded.
+    /// * `bool` - `true` when default handling completes.
     ///
     /// # Example
     /// ```ignore
@@ -655,7 +656,7 @@ impl PoolContract {
 
         let funded_key = DataKey::FundedInvoice(invoice_id.clone());
         if !env.storage().persistent().has(&funded_key) {
-            return false;
+            panic_with_error!(&env, PoolError::InvoiceNotFound);
         }
         let funded_amount: u128 = env.storage().persistent().get(&funded_key).unwrap();
 
@@ -809,8 +810,7 @@ impl PoolContract {
     /// No authorization is required.
     ///
     /// # Panics
-    /// * `Overflow` if `total_funded` is large enough that scaling to basis
-    ///   points overflows the `u128` range.
+    /// * `Overflow` if scaling `total_funded` into basis points would overflow.
     ///
     /// # Returns
     /// * `u32` - The utilization rate in basis points, or `0` when

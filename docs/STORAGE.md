@@ -59,7 +59,6 @@ All contracts follow a consistent TTL extension pattern:
 | DataKey | Type | Description | Set During |
 |---------|------|-------------|------------|
 | `Admin` | `Address` | Contract admin address | `initialize()` |
-| `RegistryContract` | `Address` | *Not used — key exists in type enum only* | — |
 
 ### Persistent Storage
 
