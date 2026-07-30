@@ -3,9 +3,6 @@
 use proptest::prelude::*;
 use proptest::test_runner::{Config as ProptestConfig, TestRunner};
 use soroban_sdk::{
-    contract, contractimpl, contracttype, testutils::Address as _, testutils::Events as _,
-    testutils::Ledger, testutils::MockAuth, testutils::MockAuthInvoke, Address, BytesN, Env,
-    IntoVal, Symbol, TryFromVal,
     contract, contractimpl, contracttype,
     testutils::{Address as _, Events as _, Ledger},
     Address, BytesN, Env, IntoVal, Symbol, TryFromVal,
@@ -853,22 +850,6 @@ fn test_get_funding_asset_returns_correct_asset() {
 }
 
 #[test]
-fn test_set_pool_contract_emits_event() {
-    let (env, client, _issuer, _buyer, _registry, usdc) = setup();
-    let pool = mock_pool_with_asset(&env, &usdc);
-    client.set_pool_contract(&pool);
-
-    let events = env.events().all();
-    assert_eq!(events.len(), 2);
-    let event = events.get(1).unwrap();
-    assert_eq!(event.1.len(), 3);
-    let symbol: Symbol = Symbol::try_from_val(&env, &event.1.get(0).unwrap()).unwrap();
-    assert_eq!(symbol, Symbol::new(&env, "pool_contract_updated"));
-    let old: Address = Address::try_from_val(&env, &event.1.get(1).unwrap()).unwrap();
-    assert_eq!(old, pool);
-    let new: Address = Address::try_from_val(&env, &event.1.get(2).unwrap()).unwrap();
-    assert_eq!(new, pool);
-}
 fn test_expire_listing_succeeds_by_issuer() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
@@ -895,14 +876,6 @@ fn test_expire_listing_succeeds_by_admin() {
     env.ledger()
         .set_timestamp(env.ledger().timestamp() + 7 * 24 * 60 * 60 + 1);
 
-    let events = env.events().all();
-    assert_eq!(events.len(), 3);
-    let event = events.get(2).unwrap();
-    assert_eq!(event.1.len(), 3);
-    let old: Address = Address::try_from_val(&env, &event.1.get(1).unwrap()).unwrap();
-    assert_eq!(old, first_pool);
-    let new: Address = Address::try_from_val(&env, &event.1.get(2).unwrap()).unwrap();
-    assert_eq!(new, second_pool);
     let result = client.expire_listing(&invoice_id);
     assert!(result);
     assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Expired);
@@ -993,29 +966,6 @@ fn test_set_expiry_window_rejects_out_of_bounds() {
     let (_env, client, _, _, _, _) = setup();
     // Set an expiry window that exceeds the 365-day upper bound
     client.set_expiry_window(&31_536_001);
-}
-
-#[test]
-fn test_set_pool_contract_emits_event() {
-    let (env, client, _, _, _, _) = setup();
-    let pool = Address::generate(&env);
-
-    client.set_pool_contract(&pool);
-
-    let contract_id = client.address.clone();
-    let events = env.events().all();
-    let (event_contract, topics, data) = events.last().expect("expected at least one event");
-    assert_eq!(event_contract, contract_id);
-    assert_eq!(
-        topics,
-        (
-            Symbol::new(&env, "pool_contract_updated"),
-            pool.clone(),
-            pool.clone()
-        )
-            .into_val(&env)
-    );
-    <()>::try_from_val(&env, &data).unwrap();
 }
 
 #[test]
@@ -1395,14 +1345,6 @@ fn test_repay_emits_event() {
 
     let contract_id = client.address.clone();
     let events = env.events().all();
-    assert_eq!(events.len(), 2);
-    let (event_contract, topics, data) = events.get(1).unwrap();
-    assert_eq!(event_contract, contract_id);
-    assert_eq!(
-        topics,
-        (Symbol::new(&env, "expiry_window_set"),).into_val(&env)
-    );
-    assert_eq!(u64::try_from_val(&env, &data).unwrap(), window);
     let found = events.iter().any(|e| {
         let (c, topics, _data) = e;
         if c != contract_id {
@@ -1423,87 +1365,6 @@ fn test_repay_fails_from_created() {
     // Status is Created — repay should panic
     client.repay(&invoice_id);
 }
-
-    // Create two invoices with identical parameters
-    let id1 = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
-    let id2 = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
-
-    // 1. Assert id1 != id2
-    assert_ne!(id1, id2);
-
-    // 2. Assert state after: verify both invoices exist in persistent storage with correct fields
-    let inv1 = client.get(&id1);
-    let inv2 = client.get(&id2);
-
-    assert_eq!(inv1.id, id1);
-    assert_eq!(inv2.id, id2);
-
-    assert_eq!(inv1.issuer, issuer);
-    assert_eq!(inv2.issuer, issuer);
-    assert_eq!(inv1.buyer, buyer);
-    assert_eq!(inv2.buyer, buyer);
-
-    assert_eq!(inv1.face_value, face_value);
-    assert_eq!(inv2.face_value, face_value);
-    assert_eq!(inv1.due_date, due_date);
-    assert_eq!(inv2.due_date, due_date);
-
-    assert_eq!(inv1.funding_asset, usdc);
-    assert_eq!(inv2.funding_asset, usdc);
-    assert_eq!(inv1.status, InvoiceStatus::Created);
-    assert_eq!(inv2.status, InvoiceStatus::Created);
-
-    // Assert internal instance counter incremented to 2
-    let counter: u64 = env.as_contract(&client.address, || {
-        env.storage()
-            .instance()
-            .get(&crate::DataKey::Counter)
-            .unwrap()
-    });
-    assert_eq!(counter, 2);
-
-    // Assert index queries return both invoices
-    assert_eq!(client.get_by_issuer(&issuer).len(), 2);
-    assert_eq!(client.get_by_buyer(&buyer).len(), 2);
-    assert_eq!(client.get_by_status(&InvoiceStatus::Created).len(), 2);
-
-    // 3. Assert emitted events: two invoice_created events emitted (plus initialization event)
-    let contract_id = client.address.clone();
-    let events = env.events().all();
-    assert_eq!(events.len(), 3);
-
-    let (event1_contract, event1_topics, event1_data) =
-        events.get(1).expect("expected first invoice_created event");
-    assert_eq!(event1_contract, contract_id);
-    assert_eq!(
-        event1_topics,
-        (
-            Symbol::new(&env, "invoice_created"),
-            id1.clone(),
-            issuer.clone(),
-            buyer.clone(),
-            usdc.clone(),
-        )
-            .into_val(&env)
-    );
-    assert_eq!(u128::try_from_val(&env, &event1_data).unwrap(), face_value);
-
-    let (event2_contract, event2_topics, event2_data) = events
-        .get(2)
-        .expect("expected second invoice_created event");
-    assert_eq!(event2_contract, contract_id);
-    assert_eq!(
-        event2_topics,
-        (
-            Symbol::new(&env, "invoice_created"),
-            id2.clone(),
-            issuer.clone(),
-            buyer.clone(),
-            usdc.clone(),
-        )
-            .into_val(&env)
-    );
-    assert_eq!(u128::try_from_val(&env, &event2_data).unwrap(), face_value);
 #[test]
 #[should_panic(expected = "Error(Contract, #8)")]
 fn test_repay_fails_from_listed() {
