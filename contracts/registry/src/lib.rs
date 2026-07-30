@@ -91,9 +91,8 @@ impl RegistryContract {
             panic_with_error!(&env, RegistryError::AlreadyRegistered);
         }
         let profile = Profile::new(
-            address.clone(),
             Role::Issuer,
-            true,
+            false,
             env.ledger().timestamp(),
             metadata,
         );
@@ -134,11 +133,10 @@ impl RegistryContract {
             }
 
             let profile = Profile::new(
-                address.clone(),
                 Role::Issuer,
                 true,
                 env.ledger().timestamp(),
-                metadata,
+                map![&env], // Migrated issuers have empty metadata initially
             );
 
             env.storage().persistent().set(&key, &profile);
@@ -196,9 +194,8 @@ impl RegistryContract {
             panic_with_error!(&env, RegistryError::AlreadyRegistered);
         }
         let profile = Profile::new(
-            address.clone(),
             Role::Buyer,
-            true,
+            false,
             env.ledger().timestamp(),
             metadata,
         );
