@@ -2019,3 +2019,216 @@ fn test_create_fails_self_invoicing() {
     let due_date = env.ledger().timestamp() + 86400;
     client.create(&issuer, &issuer, &1_000_000_000, &due_date, &usdc);
 }
+
+// ============== ISSUE #218: create writes to InvoicesByIssuer and InvoicesByBuyer indexes ==============
+
+#[test]
+fn test_create_writes_to_issuer_index() {
+    // Verifies that `create` stores the invoice ID in the issuer's index,
+    // both via a direct storage read and the public `get_by_issuer` query.
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let face_value: u128 = 1_000_000_000;
+    let due_date = env.ledger().timestamp() + 86400;
+
+    let invoice_id = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+
+    // Direct storage read: issuer index count and entry
+    env.as_contract(&client.address, || {
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::IssuerIndexCount(issuer.clone()))
+            .unwrap_or(0);
+        assert_eq!(count, 1);
+
+        let stored_id: BytesN<32> = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::IssuerIndexEntry(issuer.clone(), 0))
+            .unwrap();
+        assert_eq!(stored_id, invoice_id);
+    });
+
+    // Public API: get_by_issuer returns the invoice
+    let invoices = client.get_by_issuer(&issuer);
+    assert_eq!(invoices.len(), 1);
+    assert_eq!(invoices.get(0).unwrap().id, invoice_id);
+
+    // A different (unused) issuer address returns no invoices
+    let other = Address::generate(&env);
+    let empty = client.get_by_issuer(&other);
+    assert_eq!(empty.len(), 0);
+
+    // Verify the invoice_created event was emitted by the invoice contract
+    let events = env.events().all();
+    let (event_contract, _topics, _data) = events.last().expect("expected at least one event");
+    assert_eq!(event_contract, client.address);
+}
+
+#[test]
+fn test_create_writes_to_buyer_index() {
+    // Verifies that `create` stores the invoice ID in the buyer's index,
+    // both via a direct storage read and the public `get_by_buyer` query.
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let face_value: u128 = 1_000_000_000;
+    let due_date = env.ledger().timestamp() + 86400;
+
+    let invoice_id = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+
+    // Direct storage read: buyer index count and entry
+    env.as_contract(&client.address, || {
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::BuyerIndexCount(buyer.clone()))
+            .unwrap_or(0);
+        assert_eq!(count, 1);
+
+        let stored_id: BytesN<32> = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::BuyerIndexEntry(buyer.clone(), 0))
+            .unwrap();
+        assert_eq!(stored_id, invoice_id);
+    });
+
+    // Public API: get_by_buyer returns the invoice
+    let invoices = client.get_by_buyer(&buyer);
+    assert_eq!(invoices.len(), 1);
+    assert_eq!(invoices.get(0).unwrap().id, invoice_id);
+
+    // A different (unused) buyer address returns no invoices
+    let other = Address::generate(&env);
+    let empty = client.get_by_buyer(&other);
+    assert_eq!(empty.len(), 0);
+
+    // Verify the invoice_created event was emitted by the invoice contract
+    let events = env.events().all();
+    let (event_contract, _topics, _data) = events.last().expect("expected at least one event");
+    assert_eq!(event_contract, client.address);
+}
+
+#[test]
+fn test_create_writes_to_both_indexes_multiple_invoices() {
+    // Verifies that when the same issuer and buyer create multiple invoices,
+    // both indexes correctly accumulate the invoice IDs.
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+
+    let id1 = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    let id2 = client.create(&issuer, &buyer, &2_000_000_000, &due_date, &usdc);
+
+    // Direct storage: issuer index has 2 entries
+    env.as_contract(&client.address, || {
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::IssuerIndexCount(issuer.clone()))
+            .unwrap_or(0);
+        assert_eq!(count, 2);
+
+        let stored_id_0: BytesN<32> = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::IssuerIndexEntry(issuer.clone(), 0))
+            .unwrap();
+        assert_eq!(stored_id_0, id1);
+
+        let stored_id_1: BytesN<32> = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::IssuerIndexEntry(issuer.clone(), 1))
+            .unwrap();
+        assert_eq!(stored_id_1, id2);
+    });
+
+    // Direct storage: buyer index has 2 entries
+    env.as_contract(&client.address, || {
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::BuyerIndexCount(buyer.clone()))
+            .unwrap_or(0);
+        assert_eq!(count, 2);
+
+        let stored_id_0: BytesN<32> = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::BuyerIndexEntry(buyer.clone(), 0))
+            .unwrap();
+        assert_eq!(stored_id_0, id1);
+
+        let stored_id_1: BytesN<32> = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::BuyerIndexEntry(buyer.clone(), 1))
+            .unwrap();
+        assert_eq!(stored_id_1, id2);
+    });
+
+    // Public API assertions
+    assert_eq!(client.get_by_issuer(&issuer).len(), 2);
+    assert_eq!(client.get_by_buyer(&buyer).len(), 2);
+}
+
+#[test]
+fn test_create_indexes_are_party_specific() {
+    // Verifies that issuer and buyer indexes are independent:
+    // an invoice created by issuer A with buyer B should appear in
+    // A's issuer index and B's buyer index, but NOT in B's issuer index
+    // or A's buyer index.
+    let (env, client, issuer, buyer, registry, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+
+    // Issuer should see the invoice in their issuer index
+    let issuer_invoices = client.get_by_issuer(&issuer);
+    assert_eq!(issuer_invoices.len(), 1);
+    assert_eq!(issuer_invoices.get(0).unwrap().id, invoice_id);
+
+    // Buyer should see the invoice in their buyer index
+    let buyer_invoices = client.get_by_buyer(&buyer);
+    assert_eq!(buyer_invoices.len(), 1);
+    assert_eq!(buyer_invoices.get(0).unwrap().id, invoice_id);
+
+    // Issuer should NOT see the invoice in their buyer index
+    let issuer_as_buyer = client.get_by_buyer(&issuer);
+    assert_eq!(issuer_as_buyer.len(), 0);
+
+    // Buyer should NOT see the invoice in their issuer index
+    let buyer_as_issuer = client.get_by_issuer(&buyer);
+    assert_eq!(buyer_as_issuer.len(), 0);
+
+    // An unrelated third party should see nothing in either index
+    let stranger = Address::generate(&env);
+    registry.register(&stranger);
+    assert_eq!(client.get_by_issuer(&stranger).len(), 0);
+    assert_eq!(client.get_by_buyer(&stranger).len(), 0);
+}
+
+#[test]
+fn test_create_indexes_emit_invoice_created_event() {
+    // Verifies that the invoice_created event is emitted with the correct
+    // topics and data payload when an invoice is created.
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let face_value: u128 = 1_000_000_000;
+    let due_date = env.ledger().timestamp() + 86400;
+
+    let invoice_id = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+
+    let contract_id = client.address;
+    let events = env.events().all();
+
+    // Should have at least one event; the last one should be invoice_created
+    let (event_contract, topics, data) = events.last().expect("expected at least one event");
+    assert_eq!(event_contract, contract_id);
+
+    // Topics: (Symbol("invoice_created"), invoice_id, issuer, buyer, funding_asset)
+    let topic0: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
+    assert_eq!(topic0, Symbol::new(&env, "invoice_created"));
+
+    // Data: face_value as u128
+    let stored_value: u128 = u128::try_from_val(&env, &data).unwrap();
+    assert_eq!(stored_value, face_value);
+}
