@@ -119,6 +119,67 @@ impl InvoiceContract {
         }
     }
 
+    pub fn add_supported_asset(env: Env, asset: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
+        admin.require_auth();
+
+        let key = DataKey::SupportedAsset(asset.clone());
+        if env.storage().persistent().has(&key) {
+            return;
+        }
+
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::SupportedAssetCount)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::SupportedAssetCount, &(count + 1));
+        env.storage().persistent().set(&key, &true);
+    }
+
+    pub fn remove_supported_asset(env: Env, asset: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
+        admin.require_auth();
+
+        let key = DataKey::SupportedAsset(asset.clone());
+        if !env.storage().persistent().has(&key) {
+            return;
+        }
+
+        let count: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::SupportedAssetCount)
+            .unwrap_or(0);
+        env.storage()
+            .instance()
+            .set(&DataKey::SupportedAssetCount, &(count - 1));
+        env.storage().persistent().remove(&key);
+    }
+
+    pub fn is_supported_asset(env: Env, asset: Address) -> bool {
+        env.storage()
+            .persistent()
+            .has(&DataKey::SupportedAsset(asset))
+    }
+
+    pub fn get_supported_asset_count(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::SupportedAssetCount)
+            .unwrap_or(0)
+    }
+
     /// Creates a new invoice with the given issuer, buyer, and terms.
     ///
     /// # Arguments
@@ -146,6 +207,7 @@ impl InvoiceContract {
     /// * `InvoiceError::InvalidDueDateTooFar` if `due_date` exceeds
     ///   `now + MAX_INVOICE_LIFETIME_SECONDS` (~10 years).
     /// * `InvoiceError::CounterOverflow` if the internal invoice counter overflows.
+    /// * `InvoiceError::InvalidParticipants` if `issuer` and `buyer` are the same address.
     ///
     /// # Returns
     /// * `BytesN<32>` - The generated invoice ID.
@@ -164,26 +226,25 @@ impl InvoiceContract {
     ) -> BytesN<32> {
         issuer.require_auth();
 
+        if issuer == buyer {
+            panic_with_error!(&env, InvoiceError::InvalidParticipants);
+        }
+
         let registry_id: Address = env
             .storage()
             .instance()
             .get(&DataKey::RegistryContract)
             .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
 
-        let mut args = Vec::new(&env);
-        args.push_back(issuer.clone().into_val(&env));
-        let issuer_verified: bool =
-            env.invoke_contract(&registry_id, &Symbol::new(&env, "is_verified"), args);
-        if !issuer_verified {
-            panic_with_error!(&env, InvoiceError::IssuerNotVerified);
-        }
+        require_verified(&env, &registry_id, &issuer, InvoiceError::IssuerNotVerified);
+        require_verified(&env, &registry_id, &buyer, InvoiceError::BuyerNotVerified);
 
-        let mut args = Vec::new(&env);
-        args.push_back(buyer.clone().into_val(&env));
-        let buyer_verified: bool =
-            env.invoke_contract(&registry_id, &Symbol::new(&env, "is_verified"), args);
-        if !buyer_verified {
-            panic_with_error!(&env, InvoiceError::BuyerNotVerified);
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::SupportedAsset(funding_asset.clone()))
+        {
+            panic_with_error!(&env, InvoiceError::UnsupportedAsset);
         }
 
         if face_value == 0 {
@@ -352,6 +413,7 @@ impl InvoiceContract {
     /// * `InvoiceError::NotFound` if the invoice cannot be found.
     /// * `InvoiceError::InvalidStatusTransition` if invoice status is not `Listed`.
     /// * `InvoiceError::UnsupportedAsset` if the asset does not match the invoice funding asset.
+    /// * `InvoiceError::InvalidAmount` if `funded_amount` is zero.
     ///
     /// # Returns
     /// * `bool` - `true` when funding is recorded.
@@ -368,6 +430,10 @@ impl InvoiceContract {
         funded_amount: u128,
     ) -> bool {
         pool_address.require_auth();
+
+        if funded_amount == 0 {
+            panic_with_error!(&env, InvoiceError::InvalidAmount);
+        }
 
         let inv_key = DataKey::Invoice(invoice_id.clone());
         let mut invoice: Invoice = env
@@ -464,6 +530,14 @@ impl InvoiceContract {
     /// # Returns
     /// * `bool` - `true` when confirmation is processed.
     ///
+    /// # Events
+    /// All events are published after the invoice record is persisted and its
+    /// TTL extended, so any event observer that reacts to an event is
+    /// guaranteed to see the fully-updated invoice if it reads storage in
+    /// response. When both parties have confirmed, `both_confirmed` is
+    /// published first, followed by `delivery_confirmed`; otherwise only
+    /// `delivery_confirmed` is published.
+    ///
     /// # Example
     /// ```ignore
     /// client.confirm_delivery(&invoice_id, &buyer);
@@ -497,7 +571,8 @@ impl InvoiceContract {
             invoice.buyer_confirmed = true;
         }
 
-        if invoice.issuer_confirmed && invoice.buyer_confirmed {
+        let both_confirmed = invoice.issuer_confirmed && invoice.buyer_confirmed;
+        if both_confirmed {
             invoice.status = InvoiceStatus::Confirmed;
             move_status_index(
                 &env,
@@ -505,11 +580,17 @@ impl InvoiceContract {
                 InvoiceStatus::Active,
                 InvoiceStatus::Confirmed,
             );
-            events::both_confirmed(&env, &invoice_id);
         }
 
         Self::save_invoice(&env, inv_key, &invoice);
         Self::extend_instance_ttl(&env);
+
+        // Emit events only after all state (invoice record, status index,
+        // TTLs) has been persisted, so event ordering never depends on which
+        // branch was taken above.
+        if both_confirmed {
+            events::both_confirmed(&env, &invoice_id);
+        }
         events::delivery_confirmed(&env, &invoice_id, &confirmer);
         true
     }
@@ -536,6 +617,27 @@ impl InvoiceContract {
     /// client.repay(&invoice_id);
     /// ```
     pub fn repay(env: Env, invoice_id: BytesN<32>) -> bool {
+        // Repays an invoice from Funded, Active, or Confirmed state,
+        // transferring the face value to the pool.
+        //
+        // # Arguments
+        // * `env` - The Soroban environment.
+        // * `invoice_id` - The invoice being repaid.
+        //
+        // # Returns
+        // * `bool` - `true` when repayment is completed.
+        //
+        // # Auth
+        // * `buyer` - The buyer must authorize the repayment.
+        //
+        // # Panics
+        // * `NotFound` if the invoice cannot be found.
+        // * `InvalidStatusTransition` if invoice status is not `Funded`, `Active`, or `Confirmed`.
+        //
+        // # Example
+        // ```ignore
+        // client.repay(&invoice_id);
+        // ```
         let inv_key = DataKey::Invoice(invoice_id.clone());
         let invoice: Invoice = env
             .storage()
@@ -543,9 +645,13 @@ impl InvoiceContract {
             .get(&inv_key)
             .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
         invoice.buyer.require_auth();
-        if invoice.status != InvoiceStatus::Confirmed {
+        if invoice.status != InvoiceStatus::Funded
+            && invoice.status != InvoiceStatus::Active
+            && invoice.status != InvoiceStatus::Confirmed
+        {
             panic_with_error!(&env, InvoiceError::InvalidStatusTransition);
         }
+        let prev_status = invoice.status;
 
         let pool: Address = invoice
             .funding_pool
@@ -591,12 +697,7 @@ impl InvoiceContract {
         Self::save_invoice(&env, inv_key, &updated);
         Self::extend_instance_ttl(&env);
 
-        move_status_index(
-            &env,
-            &invoice_id,
-            InvoiceStatus::Confirmed,
-            InvoiceStatus::Repaid,
-        );
+        move_status_index(&env, &invoice_id, prev_status, InvoiceStatus::Repaid);
         events::invoice_repaid(&env, &invoice_id, updated.face_value);
         true
     }
@@ -609,6 +710,7 @@ impl InvoiceContract {
             .get(&inv_key)
             .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
         invoice.buyer.require_auth();
+        let _prev_status = invoice.status;
         if invoice.status != InvoiceStatus::Confirmed {
             panic_with_error!(&env, InvoiceError::InvalidStatusTransition);
         }
@@ -631,6 +733,7 @@ impl InvoiceContract {
             panic_with_error!(&env, InvoiceError::InvalidStatusTransition);
         }
 
+        let _prev_status = invoice.status;
         let term = invoice.due_date.saturating_sub(funded_at);
         let elapsed = now.saturating_sub(funded_at);
 
@@ -664,7 +767,7 @@ impl InvoiceContract {
         Self::save_invoice(&env, inv_key, &updated);
         Self::extend_instance_ttl(&env);
 
-        self::move_status_index(
+        move_status_index(
             &env,
             &invoice_id,
             InvoiceStatus::Confirmed,
@@ -685,10 +788,12 @@ impl InvoiceContract {
     /// * `invoice_id` - The invoice to default.
     ///
     /// # Auth
-    /// Requires authorization from the stored admin address.
+    /// No authorization is required. Anyone may trigger a default once the due
+    /// date has passed. This removes the single-point-of-failure risk of an
+    /// admin-only gate and ensures LP loss recognition is timely.
     ///
     /// # Panics
-    /// * `InvoiceError::NotFound` if the admin, invoice, or funding pool cannot be found.
+    /// * `InvoiceError::NotFound` if the invoice or funding pool cannot be found.
     /// * `InvoiceError::InvalidStatusTransition` if invoice is not `Funded`, `Active`, or `Confirmed`.
     /// * `InvoiceError::DueDateNotPassed` if `now < due_date` — the due date
     ///   has not yet been reached.
@@ -701,13 +806,6 @@ impl InvoiceContract {
     /// client.trigger_default(&invoice_id);
     /// ```
     pub fn trigger_default(env: Env, invoice_id: BytesN<32>) -> bool {
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
-        admin.require_auth();
-
         let inv_key = DataKey::Invoice(invoice_id.clone());
         let mut invoice: Invoice = env
             .storage()
@@ -743,6 +841,9 @@ impl InvoiceContract {
     }
 
     pub fn set_expiry_window(env: Env, window: u64) {
+        if window > 31_536_000u64 {
+            panic_with_error!(&env, InvoiceError::InvalidExpiryWindow);
+        }
         let admin: Address = env
             .storage()
             .instance()
@@ -1183,6 +1284,17 @@ impl InvoiceContract {
 
     fn extend_instance_ttl(env: &Env) {
         env.storage().instance().extend_ttl(100, 2_000_000);
+    }
+}
+
+/// Checks that an address is verified in the registry, panicking with the
+/// provided error if not.
+fn require_verified(env: &Env, registry_id: &Address, addr: &Address, err: InvoiceError) {
+    let mut args = Vec::new(env);
+    args.push_back(addr.clone().into_val(env));
+    let verified: bool = env.invoke_contract(registry_id, &Symbol::new(env, "is_verified"), args);
+    if !verified {
+        panic_with_error!(env, err);
     }
 }
 

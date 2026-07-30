@@ -1,5 +1,12 @@
 use soroban_sdk::{Address, Env, Symbol};
 
+pub fn contract_initialized(env: &Env, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "contract_initialized"), admin.clone()),
+        (),
+    );
+}
+
 pub fn issuer_registered(env: &Env, address: &Address) {
     env.events()
         .publish((Symbol::new(env, "issuer_registered"), address.clone()), ());
@@ -31,6 +38,18 @@ pub fn profile_verified(env: &Env, address: &Address, status: bool) {
     env.events().publish(
         (Symbol::new(env, "profile_verified"), address.clone()),
         status,
+    );
+}
+
+pub fn profile_updated(env: &Env, address: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "profile_updated"), address.clone()), ());
+}
+
+pub fn address_reinstated(env: &Env, address: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "address_reinstated"), address.clone()),
+        (),
     );
 }
 

@@ -23,7 +23,7 @@ Copy `.env.example` to `.env` and fill in:
 |----------|-------------|
 | `DEPLOYER_ACCOUNT` | Key alias for the deployer (default: `deployer`) |
 | `USDC_ISSUER` | Stellar address of the USDC issuer on testnet |
-| `XLM_ASSET` | XLM asset contract address (or native) |
+| `XLM_ASSET` | XLM asset contract address (or native) - EXPERIMENTAL/INCOMPLETE |
 
 ## Testnet Deployment
 
@@ -83,10 +83,10 @@ because each contract references others:
 4. pool_contract (USDC)
    └─ needs: invoice_contract, escrow_contract, USDC asset
 
-5. escrow_contract (XLM)
+5. escrow_contract (XLM) [EXPERIMENTAL]
    └─ needs: pool_contract, invoice_contract, XLM asset
 
-6. pool_contract (XLM)
+6. pool_contract (XLM) [EXPERIMENTAL]
    └─ needs: invoice_contract, escrow_contract, XLM asset
 
 7. Wire pool into invoice
@@ -121,7 +121,11 @@ This checks each contract responds to a read-only query
 
 You can also verify on [Stellar Expert Testnet](https://stellar.expert/explorer/testnet).
 
-## Address Persistence
+## Contract Address Lifecycle & Rotation Policy
+
+Testnet contract addresses are ephemeral and may be rotated at any time during development. When rotated, old addresses will drift silently and are no longer maintained.
+
+### Rotation Conditions
 
 Deployed addresses are saved in `.deployed-addresses`:
 
@@ -130,11 +134,19 @@ registry=<CONTRACT_ID>
 invoice=<CONTRACT_ID>
 escrow_usdc=<CONTRACT_ID>
 pool_usdc=<CONTRACT_ID>
-escrow_xlm=<CONTRACT_ID>
-pool_xlm=<CONTRACT_ID>
+escrow_xlm=<CONTRACT_ID> (EXPERIMENTAL)
+pool_xlm=<CONTRACT_ID> (EXPERIMENTAL)
 ```
 
-The `--fresh` flag removes this file and starts clean.
+- **Default mode** (resume): Reuses addresses found in `.deployed-addresses` and skips already-deployed contracts.
+- **Fresh mode** (`--fresh`): Removes `.deployed-addresses` and starts clean, forcing a complete rotation of all contract addresses on-chain.
+
+### Integrator Expectations
+
+When an address rotation occurs, the `README.md` is automatically updated with the latest live testnet addresses during the build/deploy step. Integrators and contributors should:
+1. Treat testnet addresses as volatile.
+2. Regularly pull the latest changes from the `main` branch to synchronize with the current testnet environment.
+3. Check `README.md` for the current canonical testnet addresses rather than hardcoding them in local environments.
 
 ## Rollback
 
