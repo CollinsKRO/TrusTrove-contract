@@ -1001,7 +1001,7 @@ fn test_batch_register_issuers_exceeds_limit() {
 #[test]
 fn test_profile_packing_correctness() {
     let env = Env::default();
-    let addr = Address::generate(&env);
+    let _addr = Address::generate(&env);
     let metadata = map![&env];
 
     // Issuer, verified = true
