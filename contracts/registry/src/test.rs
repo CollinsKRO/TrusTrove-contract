@@ -163,12 +163,7 @@ fn test_revoke_wrong_auth_panics() {
     let admin = Address::generate(&env);
     let issuer = Address::generate(&env);
     let metadata = map![&env];
-    let profile = Profile::new(
-        Role::Issuer,
-        true,
-        env.ledger().timestamp(),
-        metadata,
-    );
+    let profile = Profile::new(Role::Issuer, true, env.ledger().timestamp(), metadata);
 
     env.as_contract(&contract_id, || {
         env.storage().instance().set(&DataKey::Admin, &admin);
@@ -275,12 +270,7 @@ fn test_reinstate_wrong_auth_panics() {
     let admin = Address::generate(&env);
     let issuer = Address::generate(&env);
     let metadata = map![&env];
-    let profile = Profile::new(
-        Role::Issuer,
-        false,
-        env.ledger().timestamp(),
-        metadata,
-    );
+    let profile = Profile::new(Role::Issuer, false, env.ledger().timestamp(), metadata);
 
     env.as_contract(&contract_id, || {
         env.storage().instance().set(&DataKey::Admin, &admin);
@@ -362,12 +352,7 @@ fn test_update_metadata_wrong_auth_panics() {
             String::from_str(&env, "Acme Corp"),
         )
     ];
-    let profile = Profile::new(
-        Role::Issuer,
-        true,
-        env.ledger().timestamp(),
-        metadata,
-    );
+    let profile = Profile::new(Role::Issuer, true, env.ledger().timestamp(), metadata);
 
     env.as_contract(&contract_id, || {
         env.storage()
@@ -460,12 +445,7 @@ fn test_update_profile_wrong_auth_panics() {
             String::from_str(&env, "Acme Corp"),
         )
     ];
-    let profile = Profile::new(
-        Role::Issuer,
-        true,
-        env.ledger().timestamp(),
-        metadata,
-    );
+    let profile = Profile::new(Role::Issuer, true, env.ledger().timestamp(), metadata);
 
     env.as_contract(&contract_id, || {
         env.storage()

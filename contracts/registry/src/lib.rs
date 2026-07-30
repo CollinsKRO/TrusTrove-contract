@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, Map, String, Vec};
+use soroban_sdk::{contract, contractimpl, map, panic_with_error, Address, Env, Map, String, Vec};
 
 mod errors;
 mod events;
@@ -90,12 +90,7 @@ impl RegistryContract {
         {
             panic_with_error!(&env, RegistryError::AlreadyRegistered);
         }
-        let profile = Profile::new(
-            Role::Issuer,
-            false,
-            env.ledger().timestamp(),
-            metadata,
-        );
+        let profile = Profile::new(Role::Issuer, false, env.ledger().timestamp(), metadata);
         let key = DataKey::Profile(address.clone());
         env.storage().persistent().set(&key, &profile);
         env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
@@ -132,12 +127,8 @@ impl RegistryContract {
                 continue;
             }
 
-            let profile = Profile::new(
-                Role::Issuer,
-                true,
-                env.ledger().timestamp(),
-                map![&env], // Migrated issuers have empty metadata initially
-            );
+            let profile =
+                Profile::new(Role::Issuer, true, env.ledger().timestamp(), map![&env]);
 
             env.storage().persistent().set(&key, &profile);
             env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
@@ -193,12 +184,7 @@ impl RegistryContract {
         {
             panic_with_error!(&env, RegistryError::AlreadyRegistered);
         }
-        let profile = Profile::new(
-            Role::Buyer,
-            false,
-            env.ledger().timestamp(),
-            metadata,
-        );
+        let profile = Profile::new(Role::Buyer, false, env.ledger().timestamp(), metadata);
         let key = DataKey::Profile(address.clone());
         env.storage().persistent().set(&key, &profile);
         env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
