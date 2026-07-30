@@ -28,7 +28,6 @@
         }
       ]
     ],
-    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM",
@@ -2056,8 +2055,8 @@
                 "durability": "persistent",
                 "val": {
                   "i128": {
-                    "hi": 0,
-                    "lo": 999999000000000
+                    "hi": -1,
+                    "lo": 18446744072709551616
                   }
                 }
               }
