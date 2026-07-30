@@ -85,6 +85,7 @@ pub enum DataKey {
     Admin,
     RegistryContract,
     PoolContract,
+    EscrowContract,
     Counter,
     Invoice(BytesN<32>),
     IssuerIndexCount(Address),

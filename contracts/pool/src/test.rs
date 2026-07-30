@@ -147,6 +147,7 @@ fn setup() -> TestEnv {
     invoice.add_supported_asset(&xlm_id);
 
     invoice.set_pool_contract(&pool_id);
+    invoice.set_escrow_contract(&escrow_id);
 
     // Raise cap to 100% so existing tests (which fund at 98% utilization) still pass
     pool.set_max_utilization(&admin, &10000);
