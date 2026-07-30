@@ -1028,6 +1028,7 @@ impl InvoiceContract {
     /// No authorization is required.
     ///
     /// # Panics
+    /// * `InvoiceError::NotInitialized` if the contract has not been initialized.
     /// * `InvoiceError::NotFound` if the invoice cannot be found.
     ///
     /// # Returns
@@ -1038,12 +1039,7 @@ impl InvoiceContract {
     /// let status = client.get_status(&invoice_id);
     /// ```
     pub fn get_status(env: Env, invoice_id: BytesN<32>) -> u32 {
-        let invoice: Invoice = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Invoice(invoice_id))
-            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
-        invoice.status as u32
+        Self::get_invoice(&env, invoice_id).status as u32
     }
 
     /// Returns the face value of an invoice.
@@ -1056,6 +1052,7 @@ impl InvoiceContract {
     /// No authorization is required.
     ///
     /// # Panics
+    /// * `InvoiceError::NotInitialized` if the contract has not been initialized.
     /// * `InvoiceError::NotFound` if the invoice cannot be found.
     ///
     /// # Returns
@@ -1066,12 +1063,7 @@ impl InvoiceContract {
     /// let face_value = client.get_face_value(&invoice_id);
     /// ```
     pub fn get_face_value(env: Env, invoice_id: BytesN<32>) -> u128 {
-        let invoice: Invoice = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Invoice(invoice_id))
-            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
-        invoice.face_value
+        Self::get_invoice(&env, invoice_id).face_value
     }
 
     /// Returns the discount basis points for an invoice.
@@ -1084,6 +1076,7 @@ impl InvoiceContract {
     /// No authorization is required.
     ///
     /// # Panics
+    /// * `InvoiceError::NotInitialized` if the contract has not been initialized.
     /// * `InvoiceError::NotFound` if the invoice cannot be found.
     ///
     /// # Returns
@@ -1094,12 +1087,7 @@ impl InvoiceContract {
     /// let discount = client.get_discount_bps(&invoice_id);
     /// ```
     pub fn get_discount_bps(env: Env, invoice_id: BytesN<32>) -> u32 {
-        let invoice: Invoice = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Invoice(invoice_id))
-            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
-        invoice.discount_bps
+        Self::get_invoice(&env, invoice_id).discount_bps
     }
 
     /// Returns the funding asset for an invoice.
@@ -1112,6 +1100,7 @@ impl InvoiceContract {
     /// No authorization is required.
     ///
     /// # Panics
+    /// * `InvoiceError::NotInitialized` if the contract has not been initialized.
     /// * `InvoiceError::NotFound` if the invoice cannot be found.
     ///
     /// # Returns
@@ -1122,12 +1111,7 @@ impl InvoiceContract {
     /// let asset = client.get_funding_asset(&invoice_id);
     /// ```
     pub fn get_funding_asset(env: Env, invoice_id: BytesN<32>) -> Address {
-        let invoice: Invoice = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Invoice(invoice_id))
-            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
-        invoice.funding_asset
+        Self::get_invoice(&env, invoice_id).funding_asset
     }
 
     /// Retrieves the full invoice record by ID.
@@ -1140,6 +1124,7 @@ impl InvoiceContract {
     /// No authorization is required.
     ///
     /// # Panics
+    /// * `InvoiceError::NotInitialized` if the contract has not been initialized.
     /// * `InvoiceError::NotFound` if the invoice cannot be found.
     ///
     /// # Returns
@@ -1150,10 +1135,7 @@ impl InvoiceContract {
     /// let invoice = client.get(&invoice_id);
     /// ```
     pub fn get(env: Env, invoice_id: BytesN<32>) -> Invoice {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Invoice(invoice_id))
-            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound))
+        Self::get_invoice(&env, invoice_id)
     }
 
     /// Lists invoices for a given status.
@@ -1323,6 +1305,7 @@ impl InvoiceContract {
     /// No authorization is required.
     ///
     /// # Panics
+    /// * `InvoiceError::NotInitialized` if the contract has not been initialized.
     /// * `InvoiceError::NotFound` if the invoice cannot be found.
     ///
     /// # Returns
@@ -1333,12 +1316,7 @@ impl InvoiceContract {
     /// let issuer = client.get_issuer(&invoice_id);
     /// ```
     pub fn get_issuer(env: Env, invoice_id: BytesN<32>) -> Address {
-        let invoice: Invoice = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Invoice(invoice_id))
-            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
-        invoice.issuer
+        Self::get_invoice(&env, invoice_id).issuer
     }
 
     pub fn transfer_ownership(env: Env, new_admin: Address) {
@@ -1352,6 +1330,20 @@ impl InvoiceContract {
         env.storage().instance().set(&DataKey::Admin, &new_admin);
         events::ownership_transferred(&env, &admin, &new_admin);
         Self::extend_instance_ttl(&env);
+    }
+
+    fn require_initialized(env: &Env) {
+        if !env.storage().instance().has(&DataKey::Admin) {
+            panic_with_error!(env, InvoiceError::NotInitialized);
+        }
+    }
+
+    fn get_invoice(env: &Env, invoice_id: BytesN<32>) -> Invoice {
+        Self::require_initialized(env);
+        env.storage()
+            .persistent()
+            .get(&DataKey::Invoice(invoice_id))
+            .unwrap_or_else(|| panic_with_error!(env, InvoiceError::NotFound))
     }
 
     fn extend_instance_ttl(env: &Env) {
