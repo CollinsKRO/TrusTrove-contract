@@ -78,7 +78,7 @@ revoke(address) → bool
 
 ### invoice_contract
 
-Manages the full invoice lifecycle. Enforces valid state transitions. Emits events consumed by the Go indexer.
+Manages the full invoice lifecycle. Enforces valid state transitions. [Emits events](./docs/EVENTS.md#invoice-contract) consumed by the Go indexer.
 
 ```
 Created → Listed → Funded → Active → Confirmed → Repaid
@@ -249,12 +249,16 @@ Invoice status: → Defaulted
 
 ## Deployed Contracts (Stellar Testnet)
 
+<!-- START_DEPLOYED_ADDRESSES -->
 | Contract | Address |
 |----------|---------|
 | registry_contract | `CABGWVIZFF62FG67ZGFEP67NEEY4WYTMFURDMFTKKNRDAFPKPOJDTN4C` |
 | invoice_contract | `CA4O3MR7LWHRSUDBNU6FY6UDFFYBN7TGBZXBDZB4OYYXFYXIFJ6RJF6B` |
 | escrow_contract | `CAJWGUKDTTC3SKN4RAAY72J4DVIIYSCFHX6GIMNTT22ABMISJK4GBCEH` |
 | pool_contract | `CAKEWH7SJCXGV2MH2WZYIX3QDPTSSBQFXYVYBOWAGLNBBZMPLE2US6CS` |
+<!-- END_DEPLOYED_ADDRESSES -->
+
+> **Note**: Testnet addresses are subject to rotation. See [DEPLOYMENT.md](./DEPLOYMENT.md#contract-address-lifecycle--rotation-policy) for our redeployment and lifecycle policy.
 
 Verify on [Stellar Expert Testnet](https://stellar.expert/explorer/testnet)
 
@@ -402,6 +406,7 @@ Detailed references for contributors and integrators:
 - [Threat Model](./docs/THREAT_MODEL.md) — trust assumptions, auth gates, attack vectors
 - [Storage Schema](./docs/STORAGE.md) — on-chain data layout, TTL patterns, gas estimates
 - [Limitations](./docs/LIMITATIONS.md) — testnet constraints, known gaps, unhandled edge cases
+- [Event Catalog](./docs/EVENTS.md) — every emitted event, topics, data schema, and emitting contract
 
 ### Key conventions
 
