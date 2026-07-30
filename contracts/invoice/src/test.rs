@@ -2151,4 +2151,3 @@ fn test_get_uninitialized_panics() {
     let fake_id = BytesN::from_array(&env, &[0u8; 32]);
     client.get(&fake_id);
 }
-
