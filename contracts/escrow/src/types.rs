@@ -27,10 +27,10 @@ pub struct EscrowEvent {
 }
 
 #[contracttype]
+#[derive(Clone, Debug)]
 pub enum DataKey {
     Admin,
     PoolContract,
-    InvoiceContract,
     UsdcAsset,
     Locked(BytesN<32>),
     History(BytesN<32>),
