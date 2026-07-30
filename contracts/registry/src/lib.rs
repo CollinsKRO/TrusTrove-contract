@@ -90,7 +90,7 @@ impl RegistryContract {
         {
             panic_with_error!(&env, RegistryError::AlreadyRegistered);
         }
-        let profile = Profile::new(Role::Issuer, false, env.ledger().timestamp(), metadata);
+        let profile = Profile::new(Role::Issuer, true, env.ledger().timestamp(), metadata);
         let key = DataKey::Profile(address.clone());
         env.storage().persistent().set(&key, &profile);
         env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
@@ -127,8 +127,7 @@ impl RegistryContract {
                 continue;
             }
 
-            let profile =
-                Profile::new(Role::Issuer, true, env.ledger().timestamp(), map![&env]);
+            let profile = Profile::new(Role::Issuer, true, env.ledger().timestamp(), map![&env]);
 
             env.storage().persistent().set(&key, &profile);
             env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
@@ -184,7 +183,7 @@ impl RegistryContract {
         {
             panic_with_error!(&env, RegistryError::AlreadyRegistered);
         }
-        let profile = Profile::new(Role::Buyer, false, env.ledger().timestamp(), metadata);
+        let profile = Profile::new(Role::Buyer, true, env.ledger().timestamp(), metadata);
         let key = DataKey::Profile(address.clone());
         env.storage().persistent().set(&key, &profile);
         env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
