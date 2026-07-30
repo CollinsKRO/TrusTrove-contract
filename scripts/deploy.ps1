@@ -286,11 +286,11 @@ Invoke-Init "escrow_usdc" $escrowUsdcId @("--", "initialize", "--admin", $deploy
 
 Invoke-Init "pool_usdc" $poolUsdcId @("--", "initialize", "--admin", $deployerAddress, "--invoice_contract", $invoiceId, "--escrow_contract", $escrowUsdcId, "--usdc_asset", $usdcIssuer)
 
-Write-Host "`n=== Deploying XLM escrow_contract ==="
+Write-Host "`n=== Deploying XLM escrow_contract (EXPERIMENTAL) ==="
 $escrowXlmId = Deploy-Contract "escrow_xlm" "target/wasm32v1-none/release/trusttrove_escrow.wasm"
 Write-Host "XLM Escrow: $escrowXlmId"
 
-Write-Host "`n=== Deploying XLM pool_contract ==="
+Write-Host "`n=== Deploying XLM pool_contract (EXPERIMENTAL) ==="
 $poolXlmId = Deploy-Contract "pool_xlm" "target/wasm32v1-none/release/trusttrove_pool.wasm"
 Write-Host "XLM Pool: $poolXlmId"
 
@@ -317,9 +317,9 @@ $timestamp = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')
 NEXT_PUBLIC_REGISTRY_CONTRACT_ID=$registryId
 NEXT_PUBLIC_INVOICE_CONTRACT_ID=$invoiceId
 NEXT_PUBLIC_ESCROW_USDC_CONTRACT_ID=$escrowUsdcId
-NEXT_PUBLIC_ESCROW_XLM_CONTRACT_ID=$escrowXlmId
+NEXT_PUBLIC_ESCROW_XLM_CONTRACT_ID=$escrowXlmId # EXPERIMENTAL
 NEXT_PUBLIC_POOL_USDC_CONTRACT_ID=$poolUsdcId
-NEXT_PUBLIC_POOL_XLM_CONTRACT_ID=$poolXlmId
+NEXT_PUBLIC_POOL_XLM_CONTRACT_ID=$poolXlmId # EXPERIMENTAL
 "@ | Set-Content $envOut
 
 Write-Host "`n==========================================="
