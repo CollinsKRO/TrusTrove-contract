@@ -11,6 +11,7 @@ pub enum Role {
 #[derive(Clone, Debug, PartialEq)]
 pub enum VerificationStatus {
     Unregistered,
+    Pending,
     Verified,
     Revoked,
 }
@@ -61,6 +62,18 @@ impl Profile {
             self.packed_flags |= 2;
         } else {
             self.packed_flags &= !2;
+        }
+    }
+
+    pub fn revoked(&self) -> bool {
+        (self.packed_flags & 4) != 0
+    }
+
+    pub fn set_revoked(&mut self, revoked: bool) {
+        if revoked {
+            self.packed_flags |= 4;
+        } else {
+            self.packed_flags &= !4;
         }
     }
 }
