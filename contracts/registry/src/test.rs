@@ -1280,6 +1280,61 @@ fn test_metadata_buyer_empty_map_accepted() {
     assert_eq!(profile.metadata.len(), 0);
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_register_buyer_rejects_oversized_metadata_key() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let buyer = Address::generate(&env);
+    let long_key = "k".repeat((crate::MAX_METADATA_KEY_LEN + 1) as usize);
+    let metadata = map![
+        &env,
+        (
+            String::from_str(&env, &long_key),
+            String::from_str(&env, "value")
+        )
+    ];
+    client.register_buyer(&buyer, &metadata);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_register_issuer_rejects_oversized_metadata_value() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    let long_value = "v".repeat((crate::MAX_METADATA_VALUE_LEN + 1) as usize);
+    let metadata = map![
+        &env,
+        (
+            String::from_str(&env, "key"),
+            String::from_str(&env, &long_value)
+        )
+    ];
+    client.register_issuer(&issuer, &metadata);
+}
+
+#[test]
+fn test_register_metadata_at_limits_accepted() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let buyer = Address::generate(&env);
+    let key_prefix = "k".repeat((crate::MAX_METADATA_KEY_LEN - 2) as usize);
+    let value = "v".repeat(crate::MAX_METADATA_VALUE_LEN as usize);
+    let mut metadata = map![&env];
+    for i in 0..crate::MAX_METADATA_SIZE {
+        let key = std::format!("{key_prefix}{i:02}");
+        metadata.set(String::from_str(&env, &key), String::from_str(&env, &value));
+    }
+    assert_eq!(metadata.len(), crate::MAX_METADATA_SIZE);
+    assert!(client.register_buyer(&buyer, &metadata));
+    let profile = client.get_profile(&buyer);
+    assert_eq!(profile.metadata.len(), crate::MAX_METADATA_SIZE);
+}
+
 // ============== EVENT-EMISSION TESTS (#188) ==============
 
 #[test]
