@@ -8,7 +8,9 @@ use soroban_sdk::{
     Address, BytesN, Env, IntoVal, Symbol, TryFromVal,
 };
 
-use crate::{DataKey, PoolContract, PoolContractClient, TTL_EXTEND_TO, TTL_THRESHOLD};
+use crate::{
+    DataKey, PoolContract, PoolContractClient, MIN_INITIAL_DEPOSIT, TTL_EXTEND_TO, TTL_THRESHOLD,
+};
 
 use trusttrove_escrow::{EscrowContract as RealEscrow, EscrowContractClient as RealEscrowClient};
 use trusttrove_invoice::{
@@ -341,13 +343,27 @@ fn test_no_deposit_ever_receives_zero_shares() {
     }
 }
 
-// The first deposit (total_shares == 0) is always 1:1 and never hits the guard,
-// even for the smallest possible amount.
+// The initial deposit in an empty pool must be at least MIN_INITIAL_DEPOSIT (1 USDC)
+// to prevent share-price griefing attacks.
 #[test]
-fn test_first_deposit_of_one_unit_succeeds() {
+#[should_panic(expected = "Error(Contract, #4)")]
+fn test_first_deposit_below_minimum_panics_invalid_amount() {
     let te = setup();
-    let shares = te.pool.deposit(&te.lp, &1);
-    assert_eq!(shares, 1);
+    te.pool.deposit(&te.lp, &(MIN_INITIAL_DEPOSIT - 1));
+}
+
+#[test]
+fn test_first_deposit_at_minimum_succeeds() {
+    let te = setup();
+    let shares = te.pool.deposit(&te.lp, &MIN_INITIAL_DEPOSIT);
+    assert_eq!(shares, MIN_INITIAL_DEPOSIT);
+}
+
+#[test]
+fn test_first_deposit_above_minimum_succeeds() {
+    let te = setup();
+    let shares = te.pool.deposit(&te.lp, &(MIN_INITIAL_DEPOSIT + 10_000_000));
+    assert_eq!(shares, MIN_INITIAL_DEPOSIT + 10_000_000);
 }
 
 // ============== WITHDRAW TESTS ==============
@@ -441,7 +457,8 @@ fn test_fund_invoice_rejects_zero_funded_amount() {
 fn test_fund_invoice_allows_boundary_amount_of_one() {
     let te = setup();
     te.pool.deposit(&te.lp, &100_000_000_000);
-    let invoice_id = create_and_list_with_params(&te, &te.usdc_id, 1, 0);
+    // face_value=2, discount_bps=5000 -> funded_amount = 2 * 5000 / 10000 = 1
+    let invoice_id = create_and_list_with_params(&te, &te.usdc_id, 2, 5000);
 
     let result = te.pool.fund_invoice(&invoice_id);
     assert!(result);
@@ -495,6 +512,53 @@ fn test_fund_invoice_fails_asset_mismatch() {
     te.pool.deposit(&te.lp, &100_000_000_000);
     // Create invoice with XLM asset, but pool handles USDC
     let invoice_id = create_and_list(&te, &te.xlm_id);
+    te.pool.fund_invoice(&invoice_id);
+}
+
+// ============== ISSUE #275: FUND INVOICE EDGE CASES ==============
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_fund_invoice_nonexistent_invoice_panics() {
+    // Calling fund_invoice with a random invoice ID that doesn't exist
+    // should propagate the NotFound (#2) error from the invoice contract's
+    // get_status call.
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+    let fake_id = BytesN::from_array(&te.env, &[0u8; 32]);
+    te.pool.fund_invoice(&fake_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_fund_invoice_unlisted_invoice_panics() {
+    // An invoice in Created state (not yet listed) must be rejected by
+    // fund_invoice with InvoiceNotListed (#8).
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+    let due_date = te.env.ledger().timestamp() + 86400;
+    let invoice_id = te.invoice.create(
+        &te.issuer,
+        &te.buyer,
+        &1_000_000_000,
+        &due_date,
+        &te.usdc_id,
+    );
+    // Do NOT list the invoice — status is Created (0)
+    te.pool.fund_invoice(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_fund_invoice_already_funded_invoice_panics() {
+    // After successfully funding an invoice, a second call to fund_invoice
+    // must be rejected with InvoiceNotListed (#8) since the invoice status
+    // is now Funded (2) rather than Listed (1).
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+    te.pool.fund_invoice(&invoice_id);
+    // Second funding attempt should panic — invoice is no longer Listed
     te.pool.fund_invoice(&invoice_id);
 }
 
@@ -618,6 +682,24 @@ fn test_utilization_rate_after_funding() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #13)")]
+fn test_get_utilization_rate_rejects_overflow() {
+    let te = setup();
+    te.env.as_contract(&te.pool_id, || {
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalDeposits, &u128::MAX);
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalFunded, &(u128::MAX / 10_000 + 1));
+    });
+
+    let _ = te.pool.get_utilization_rate();
+}
+
+#[test]
 fn test_utilization_rate_calculates_correctly() {
     let te = setup();
     te.pool.deposit(&te.lp, &10_000_000_000);
@@ -658,6 +740,28 @@ fn test_updated_max_utilization_reflected_in_stats() {
     te.pool.set_max_utilization(&te.admin, &9000);
     let stats = te.pool.get_stats();
     assert_eq!(stats.max_utilization_bps, 9000);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #13)")]
+fn test_fund_invoice_rejects_utilization_overflow() {
+    let te = setup();
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+    // Set both TotalDeposits and TotalFunded near u128::MAX so that
+    // `available = total_deposits - total_funded` does not underflow,
+    // but `new_total_funded * 10_000` overflows in the utilization check.
+    te.env.as_contract(&te.pool_id, || {
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalDeposits, &u128::MAX);
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalFunded, &(u128::MAX / 10_000 + 1));
+    });
+
+    let _ = te.pool.fund_invoice(&invoice_id);
 }
 
 #[test]
@@ -1085,65 +1189,6 @@ fn test_handle_default_unknown_invoice_panics() {
     te.pool.handle_default(&dummy_id);
 }
 
-// ============== FULL WITHDRAW RESET TESTS ==============
-
-#[test]
-fn test_full_withdraw_resets_lp_state() {
-    let te = setup();
-    te.pool.deposit(&te.lp, &10_000_000_000);
-
-    let pos_before = te.pool.get_lp_position(&te.lp);
-    assert_eq!(pos_before.deposit_count, 1);
-
-    // Full withdrawal
-    te.pool.withdraw(&te.lp, &10_000_000_000);
-
-    let pos_after = te.pool.get_lp_position(&te.lp);
-    assert_eq!(pos_after.shares, 0);
-    assert_eq!(pos_after.deposit_count, 0);
-
-    // LPInitialDeposit should be removed
-    let init_dep_key = DataKey::LPInitialDeposit(te.lp.clone());
-    let init_dep_after: Option<u128> = te.env.as_contract(&te.pool_id, || {
-        te.env.storage().persistent().get(&init_dep_key)
-    });
-    assert!(init_dep_after.is_none());
-
-    // LPDepositCount should be removed
-    let dep_count_key = DataKey::LPDepositCount(te.lp.clone());
-    let dep_count_after: Option<u32> = te.env.as_contract(&te.pool_id, || {
-        te.env.storage().persistent().get(&dep_count_key)
-    });
-    assert!(dep_count_after.is_none());
-}
-
-#[test]
-fn test_full_withdraw_then_deposit_yield_accounting() {
-    let te = setup();
-
-    // First deposit cycle
-    te.pool.deposit(&te.lp, &10_000_000_000);
-    fund_and_repay_invoice(&te);
-
-    // Full withdrawal with yield earned
-    let returned = te.pool.withdraw(&te.lp, &10_000_000_000);
-    assert_eq!(returned, 10_200_000_000); // principal + 200M yield
-
-    let pos = te.pool.get_lp_position(&te.lp);
-    assert_eq!(pos.shares, 0);
-    assert_eq!(pos.deposit_count, 0);
-    assert_eq!(pos.yield_earned, 200_000_000);
-
-    // Re-deposit — should start with fresh deposit count and initial deposit
-    let new_shares = te.pool.deposit(&te.lp, &5_000_000_000);
-    assert_eq!(new_shares, 5_000_000_000);
-
-    let pos2 = te.pool.get_lp_position(&te.lp);
-    assert_eq!(pos2.shares, 5_000_000_000);
-    assert_eq!(pos2.deposit_count, 1); // Reset to 1, not 2
-    assert_eq!(pos2.yield_earned, 200_000_000); // Previously earned yield preserved
-}
-
 #[test]
 fn test_deposit_when_deposits_zero_but_shares_exist() {
     let te = setup();
@@ -1266,10 +1311,78 @@ fn test_withdraw_all_shares_to_zero_then_redeposit() {
 
     let final_pos = te.pool.get_lp_position(&te.lp);
     assert_eq!(final_pos.shares, 5_000_000_000);
-    assert_eq!(final_pos.deposit_count, 1); // Full withdrawal resets LPDepositCount
+    assert_eq!(final_pos.deposit_count, 1); // Reset on full withdrawal, so 1 deposit in this cycle
 }
 
-// ============== ISSUE #271: MULTI-LP PROPORTIONAL YIELD DISTRIBUTION ==============
+// ============== ISSUE #258: RESET LP STATE ON FULL WITHDRAWAL ==============
+
+#[test]
+fn test_full_withdraw_resets_lp_state() {
+    let te = setup();
+    let lp2 = create_lp_with_balance(&te, 100_000_000_000);
+
+    te.pool.deposit(&te.lp, &10_000_000_000);
+    te.pool.deposit(&lp2, &20_000_000_000);
+
+    // Generate yield so LPInitialDeposit != LPShares
+    fund_and_repay_invoice(&te);
+
+    // Full withdrawal of all shares
+    let shares = te.pool.get_lp_position(&te.lp).shares;
+    assert!(shares > 0);
+    te.pool.withdraw(&te.lp, &shares);
+
+    // Verify LPInitialDeposit is removed from storage
+    let init_dep_key = DataKey::LPInitialDeposit(te.lp.clone());
+    assert!(!te.env.as_contract(&te.pool_id, || {
+        te.env.storage().persistent().has(&init_dep_key)
+    }));
+
+    // Verify LPDepositCount is removed from storage
+    let dep_count_key = DataKey::LPDepositCount(te.lp.clone());
+    assert!(!te.env.as_contract(&te.pool_id, || {
+        te.env.storage().persistent().has(&dep_count_key)
+    }));
+
+    // Verify get_lp_position returns 0 for both
+    let pos = te.pool.get_lp_position(&te.lp);
+    assert_eq!(pos.shares, 0);
+    assert_eq!(pos.deposit_count, 0);
+}
+
+#[test]
+fn test_full_withdraw_then_deposit_yield_accounting() {
+    let te = setup();
+    let lp2 = create_lp_with_balance(&te, 100_000_000_000);
+
+    // First deposit cycle
+    te.pool.deposit(&te.lp, &10_000_000_000);
+    te.pool.deposit(&lp2, &20_000_000_000);
+
+    // Generate yield
+    fund_and_repay_invoice(&te);
+
+    // Full withdrawal with yield — principal portion should be less than USDC returned
+    let pos_before = te.pool.get_lp_position(&te.lp);
+    let returned = te.pool.withdraw(&te.lp, &pos_before.shares);
+    assert!(returned > 10_000_000_000); // Got yield
+
+    // Verify yield_earned is tracked after full withdrawal
+    let pos_after = te.pool.get_lp_position(&te.lp);
+    assert_eq!(pos_after.shares, 0);
+    assert!(pos_after.yield_earned > 0);
+
+    // Re-deposit — should start fresh with deposit_count = 1 (not 2)
+    let new_shares = te.pool.deposit(&te.lp, &5_000_000_000);
+    assert!(new_shares > 0);
+
+    let final_pos = te.pool.get_lp_position(&te.lp);
+    assert_eq!(final_pos.shares, new_shares);
+    assert_eq!(final_pos.deposit_count, 1); // Reset, not 2
+
+    // Yield earned from previous cycle is preserved
+    assert!(final_pos.yield_earned > 0);
+}
 
 #[test]
 fn test_multi_lp_proportional_yield_with_mid_cycle_deposit() {

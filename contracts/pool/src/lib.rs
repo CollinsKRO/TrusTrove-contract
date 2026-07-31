@@ -15,6 +15,11 @@ pub use constants::*;
 pub use errors::*;
 pub use types::*;
 
+/// Minimum initial deposit floor (1 USDC = 10_000_000 stroops).
+/// Prevents share-price griefing by requiring the initial deposit in an empty pool
+/// to be at least this floor.
+pub const MIN_INITIAL_DEPOSIT: u128 = 10_000_000;
+
 #[contract]
 pub struct PoolContract;
 
@@ -138,7 +143,7 @@ impl PoolContract {
     /// Requires self-authorization from `lp` (via `lp.require_auth()`).
     ///
     /// # Panics
-    /// * `InvalidAmount` if `usdc_amount` is zero.
+    /// * `InvalidAmount` if `usdc_amount` is zero or if initial deposit is below `MIN_INITIAL_DEPOSIT`.
     /// * `MinimumDeposit` if the deposit is too small to mint at least 1 share
     ///   at the current share price (prevents 0-share dust deposits).
     ///
@@ -147,7 +152,7 @@ impl PoolContract {
     ///
     /// # Example
     /// ```ignore
-    /// let shares = client.deposit(&lp, 1_000);
+    /// let shares = client.deposit(&lp, 10_000_000);
     /// ```
     pub fn deposit(env: Env, lp: Address, usdc_amount: u128) -> u128 {
         if !env.storage().instance().has(&DataKey::Admin) {
@@ -161,6 +166,10 @@ impl PoolContract {
         let totals = Self::totals(&env);
         let total_shares = totals.shares;
         let total_deposits = totals.deposits;
+
+        if (total_shares == 0 || total_deposits == 0) && usdc_amount < MIN_INITIAL_DEPOSIT {
+            panic_with_error!(&env, PoolError::InvalidAmount);
+        }
 
         let shares_to_issue = if total_shares == 0 || total_deposits == 0 {
             usdc_amount
@@ -241,6 +250,12 @@ impl PoolContract {
     /// * `NoShares` if the LP has no shares.
     /// * `InsufficientShares` if the LP does not own enough shares.
     /// * `InsufficientLiquidity` if the pool lacks enough available USDC.
+    ///
+    /// # Notes
+    /// On full withdrawal (remaining shares reach zero), `LPInitialDeposit`
+    /// and `LPDepositCount` are removed from storage. This ensures a
+    /// subsequent re-deposit starts with a fresh initial-deposit basis
+    /// and an accurate deposit count.
     ///
     /// # Returns
     /// * `u128` - The amount of USDC returned.
@@ -363,6 +378,7 @@ impl PoolContract {
     /// * `InvalidAmount` if the computed funded amount is zero.
     /// * `InsufficientLiquidity` if the pool does not have enough funds.
     /// * `UtilizationCapExceeded` if funding would push utilization above the cap.
+    /// * `Overflow` if the resulting utilization calculation overflows `u128`.
     ///
     /// # Returns
     /// * `bool` - `true` when the invoice is funded.
@@ -429,9 +445,8 @@ impl PoolContract {
 
         let max_utilization_bps = totals.max_utilization_bps;
         let new_total_funded = total_funded + funded_amount;
-        let utilization_after = (new_total_funded * 10000)
-            .checked_div(total_deposits)
-            .unwrap_or(0) as u32;
+        let utilization_after =
+            Self::utilization_bps_or_panic(&env, new_total_funded, total_deposits);
         if utilization_after > max_utilization_bps {
             panic_with_error!(&env, PoolError::UtilizationCapExceeded);
         }
@@ -822,7 +837,8 @@ impl PoolContract {
     /// * `Overflow` if scaling `total_funded` into basis points would overflow.
     ///
     /// # Returns
-    /// * `u32` - The utilization rate in basis points (`total_funded * 10_000 / total_deposits`).
+    /// * `u32` - The utilization rate in basis points, or `0` when
+    ///   `total_deposits` is zero.
     ///
     /// # Example
     /// ```ignore

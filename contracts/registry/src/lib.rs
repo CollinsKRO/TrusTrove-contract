@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Env, Map, String, Vec};
+use soroban_sdk::{contract, contractimpl, map, panic_with_error, Address, Env, Map, String, Vec};
 
 mod constants;
 mod errors;
@@ -92,13 +92,8 @@ impl RegistryContract {
         {
             panic_with_error!(&env, RegistryError::AlreadyRegistered);
         }
-        let profile = Profile::new(
-            address.clone(),
-            Role::Issuer,
-            true,
-            env.ledger().timestamp(),
-            metadata,
-        );
+        // #130: new profiles start unverified; admin must verify via verify_profile.
+        let profile = Profile::new(Role::Issuer, false, env.ledger().timestamp(), metadata);
         let key = DataKey::Profile(address.clone());
         env.storage().persistent().set(&key, &profile);
         env.storage()
@@ -137,13 +132,8 @@ impl RegistryContract {
                 continue;
             }
 
-            let profile = Profile::new(
-                address.clone(),
-                Role::Issuer,
-                true,
-                env.ledger().timestamp(),
-                metadata,
-            );
+            // #130: new profiles start unverified; admin must verify via verify_profile.
+            let profile = Profile::new(Role::Issuer, false, env.ledger().timestamp(), map![&env]);
 
             env.storage().persistent().set(&key, &profile);
             env.storage()
@@ -201,13 +191,8 @@ impl RegistryContract {
         {
             panic_with_error!(&env, RegistryError::AlreadyRegistered);
         }
-        let profile = Profile::new(
-            address.clone(),
-            Role::Buyer,
-            true,
-            env.ledger().timestamp(),
-            metadata,
-        );
+        // #130: new profiles start unverified; admin must verify via verify_profile.
+        let profile = Profile::new(Role::Buyer, false, env.ledger().timestamp(), metadata);
         let key = DataKey::Profile(address.clone());
         env.storage().persistent().set(&key, &profile);
         env.storage()
@@ -377,7 +362,8 @@ impl RegistryContract {
         {
             None => VerificationStatus::Unregistered,
             Some(p) if p.verified() => VerificationStatus::Verified,
-            Some(_) => VerificationStatus::Revoked,
+            Some(p) if p.revoked() => VerificationStatus::Revoked,
+            Some(_) => VerificationStatus::Pending,
         }
     }
 
@@ -422,6 +408,7 @@ impl RegistryContract {
             return true;
         }
         profile.set_verified(false);
+        profile.set_revoked(true);
         env.storage().persistent().set(&key, &profile);
         env.storage()
             .persistent()
@@ -473,6 +460,7 @@ impl RegistryContract {
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
         profile.set_verified(true);
+        profile.set_revoked(false);
         env.storage().persistent().set(&key, &profile);
         env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
         events::address_reinstated(&env, &address);
@@ -494,6 +482,11 @@ impl RegistryContract {
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
         profile.set_verified(verify);
+        if verify {
+            profile.set_revoked(false);
+        } else {
+            profile.set_revoked(true);
+        }
         env.storage().persistent().set(&key, &profile);
         env.storage()
             .persistent()
@@ -545,8 +538,8 @@ impl RegistryContract {
     /// * No `require_auth()` call is made — this is a read-only view.
     ///
     /// # Panics
-    /// * `RegistryError::NotFound` if the admin address is not set (contract
-    ///   was never initialized).
+    /// * `RegistryError::NotInitialized` if the admin address is not set
+    ///   (contract was never initialized).
     ///
     /// # Returns
     /// * `Address` - The stored admin address.
@@ -560,7 +553,7 @@ impl RegistryContract {
             .storage()
             .instance()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotInitialized));
         env.storage().instance().extend_ttl(100, 2_000_000);
         admin
     }
