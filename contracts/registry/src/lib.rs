@@ -10,6 +10,21 @@ mod types;
 pub use errors::*;
 pub use types::*;
 
+const MAX_METADATA_ENTRIES: u32 = 32;
+const MAX_METADATA_KEY_LEN: u32 = 64;
+const MAX_METADATA_VALUE_LEN: u32 = 512;
+
+fn validate_metadata(env: &Env, metadata: &Map<String, String>) {
+    if metadata.len() > MAX_METADATA_ENTRIES {
+        panic_with_error!(env, RegistryError::InvalidMetadata);
+    }
+    for (key, value) in metadata.iter() {
+        if key.len() > MAX_METADATA_KEY_LEN || value.len() > MAX_METADATA_VALUE_LEN {
+            panic_with_error!(env, RegistryError::InvalidMetadata);
+        }
+    }
+}
+
 #[contract]
 pub struct RegistryContract;
 
@@ -25,6 +40,7 @@ impl RegistryContract {
 
     pub fn register_issuer(env: Env, address: Address, metadata: Map<String, String>) -> bool {
         address.require_auth();
+        validate_metadata(&env, &metadata);
         if env
             .storage()
             .persistent()
@@ -48,6 +64,7 @@ impl RegistryContract {
 
     pub fn register_buyer(env: Env, address: Address, metadata: Map<String, String>) -> bool {
         address.require_auth();
+        validate_metadata(&env, &metadata);
         if env
             .storage()
             .persistent()
