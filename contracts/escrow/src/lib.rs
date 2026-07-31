@@ -53,6 +53,7 @@ impl EscrowContract {
         Self::extend_instance_ttl(&env);
     }
 
+    /// Get a token client for the USDC asset stored in the contract.
     fn usdc_client(env: &Env) -> token::Client {
         let usdc_id: Address = env.storage().instance().get(&DataKey::UsdcAsset).unwrap();
         token::Client::new(env, &usdc_id)
