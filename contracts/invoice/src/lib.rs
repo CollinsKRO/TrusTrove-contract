@@ -729,11 +729,8 @@ impl InvoiceContract {
         let mut escrow_args = Vec::new(&env);
         escrow_args.push_back(invoice_id.clone().into_val(&env));
         escrow_args.push_back(face_value.into_val(&env));
-        let _: bool = env.invoke_contract(
-            &escrow,
-            &Symbol::new(&env, "release_to_pool"),
-            escrow_args,
-        );
+        let _: bool =
+            env.invoke_contract(&escrow, &Symbol::new(&env, "release_to_pool"), escrow_args);
 
         // Step 3: notify pool to update its internal accounting
         let mut args = Vec::new(&env);

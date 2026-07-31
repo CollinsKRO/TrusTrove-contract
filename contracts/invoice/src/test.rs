@@ -1672,7 +1672,9 @@ pub struct MockEscrow;
 impl MockEscrow {
     /// Stores the pool address so `release_to_pool` knows where to forward.
     pub fn set_pool(env: Env, pool: Address) {
-        env.storage().instance().set(&Symbol::new(&env, "pool"), &pool);
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "pool"), &pool);
     }
 
     /// Minimal stub: in the mock token world, `release_to_pool` just transfers
@@ -1691,7 +1693,8 @@ impl MockEscrow {
         // reflect the repayment flow. We ask the pool for its USDC asset via a
         // helper `get_usdc_asset()` that MockPool exposes in tests, then use the
         // token client to transfer `amount` from this contract (escrow) to pool.
-        let asset: Address = env.invoke_contract(&pool, &Symbol::new(&env, "get_usdc_asset"), Vec::new(&env));
+        let asset: Address =
+            env.invoke_contract(&pool, &Symbol::new(&env, "get_usdc_asset"), Vec::new(&env));
 
         // Current contract address acts as escrow address
         let escrow_addr = env.current_contract_address();
@@ -1723,7 +1726,6 @@ fn test_add_supported_asset() {
     assert!(client.is_supported_asset(&asset));
     assert_eq!(client.get_supported_asset_count(), 2);
 }
-
 
 #[test]
 fn test_create_invoice_with_verified_parties() {
