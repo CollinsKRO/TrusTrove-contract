@@ -163,13 +163,7 @@ fn test_revoke_wrong_auth_panics() {
     let admin = Address::generate(&env);
     let issuer = Address::generate(&env);
     let metadata = map![&env];
-    let profile = Profile::new(
-        issuer.clone(),
-        Role::Issuer,
-        true,
-        env.ledger().timestamp(),
-        metadata,
-    );
+    let profile = Profile::new(Role::Issuer, true, env.ledger().timestamp(), metadata);
 
     env.as_contract(&contract_id, || {
         env.storage().instance().set(&DataKey::Admin, &admin);
@@ -276,13 +270,7 @@ fn test_reinstate_wrong_auth_panics() {
     let admin = Address::generate(&env);
     let issuer = Address::generate(&env);
     let metadata = map![&env];
-    let profile = Profile::new(
-        issuer.clone(),
-        Role::Issuer,
-        false,
-        env.ledger().timestamp(),
-        metadata,
-    );
+    let profile = Profile::new(Role::Issuer, false, env.ledger().timestamp(), metadata);
 
     env.as_contract(&contract_id, || {
         env.storage().instance().set(&DataKey::Admin, &admin);
@@ -364,13 +352,7 @@ fn test_update_metadata_wrong_auth_panics() {
             String::from_str(&env, "Acme Corp"),
         )
     ];
-    let profile = Profile::new(
-        issuer.clone(),
-        Role::Issuer,
-        true,
-        env.ledger().timestamp(),
-        metadata,
-    );
+    let profile = Profile::new(Role::Issuer, true, env.ledger().timestamp(), metadata);
 
     env.as_contract(&contract_id, || {
         env.storage()
@@ -463,13 +445,7 @@ fn test_update_profile_wrong_auth_panics() {
             String::from_str(&env, "Acme Corp"),
         )
     ];
-    let profile = Profile::new(
-        issuer.clone(),
-        Role::Issuer,
-        true,
-        env.ledger().timestamp(),
-        metadata,
-    );
+    let profile = Profile::new(Role::Issuer, true, env.ledger().timestamp(), metadata);
 
     env.as_contract(&contract_id, || {
         env.storage()
@@ -1025,26 +1001,26 @@ fn test_batch_register_issuers_exceeds_limit() {
 #[test]
 fn test_profile_packing_correctness() {
     let env = Env::default();
-    let addr = Address::generate(&env);
+    let _addr = Address::generate(&env);
     let metadata = map![&env];
 
     // Issuer, verified = true
-    let p1 = Profile::new(addr.clone(), Role::Issuer, true, 100, metadata.clone());
+    let p1 = Profile::new(Role::Issuer, true, 100, metadata.clone());
     assert_eq!(p1.role(), Role::Issuer);
     assert!(p1.verified());
 
     // Issuer, verified = false
-    let p2 = Profile::new(addr.clone(), Role::Issuer, false, 100, metadata.clone());
+    let p2 = Profile::new(Role::Issuer, false, 100, metadata.clone());
     assert_eq!(p2.role(), Role::Issuer);
     assert!(!p2.verified());
 
     // Buyer, verified = true
-    let p3 = Profile::new(addr.clone(), Role::Buyer, true, 100, metadata.clone());
+    let p3 = Profile::new(Role::Buyer, true, 100, metadata.clone());
     assert_eq!(p3.role(), Role::Buyer);
     assert!(p3.verified());
 
     // Buyer, verified = false
-    let p4 = Profile::new(addr.clone(), Role::Buyer, false, 100, metadata.clone());
+    let p4 = Profile::new(Role::Buyer, false, 100, metadata.clone());
     assert_eq!(p4.role(), Role::Buyer);
     assert!(!p4.verified());
 }
