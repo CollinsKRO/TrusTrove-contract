@@ -513,8 +513,8 @@ impl RegistryContract {
     /// * No `require_auth()` call is made — this is a read-only view.
     ///
     /// # Panics
-    /// * `RegistryError::NotFound` if the admin address is not set (contract
-    ///   was never initialized).
+    /// * `RegistryError::NotInitialized` if the admin address is not set
+    ///   (contract was never initialized).
     ///
     /// # Returns
     /// * `Address` - The stored admin address.
@@ -528,7 +528,7 @@ impl RegistryContract {
             .storage()
             .instance()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotInitialized));
         env.storage().instance().extend_ttl(100, 2_000_000);
         admin
     }
