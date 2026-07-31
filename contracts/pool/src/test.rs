@@ -8,7 +8,7 @@ use soroban_sdk::{
     Address, BytesN, Env, IntoVal, Symbol, TryFromVal,
 };
 
-use crate::{DataKey, PoolContract, PoolContractClient};
+use crate::{DataKey, PoolContract, PoolContractClient, MIN_INITIAL_DEPOSIT};
 
 use trusttrove_escrow::{EscrowContract as RealEscrow, EscrowContractClient as RealEscrowClient};
 use trusttrove_invoice::{
@@ -341,13 +341,27 @@ fn test_no_deposit_ever_receives_zero_shares() {
     }
 }
 
-// The first deposit (total_shares == 0) is always 1:1 and never hits the guard,
-// even for the smallest possible amount.
+// The initial deposit in an empty pool must be at least MIN_INITIAL_DEPOSIT (1 USDC)
+// to prevent share-price griefing attacks.
 #[test]
-fn test_first_deposit_of_one_unit_succeeds() {
+#[should_panic(expected = "Error(Contract, #4)")]
+fn test_first_deposit_below_minimum_panics_invalid_amount() {
     let te = setup();
-    let shares = te.pool.deposit(&te.lp, &1);
-    assert_eq!(shares, 1);
+    te.pool.deposit(&te.lp, &(MIN_INITIAL_DEPOSIT - 1));
+}
+
+#[test]
+fn test_first_deposit_at_minimum_succeeds() {
+    let te = setup();
+    let shares = te.pool.deposit(&te.lp, &MIN_INITIAL_DEPOSIT);
+    assert_eq!(shares, MIN_INITIAL_DEPOSIT);
+}
+
+#[test]
+fn test_first_deposit_above_minimum_succeeds() {
+    let te = setup();
+    let shares = te.pool.deposit(&te.lp, &(MIN_INITIAL_DEPOSIT + 10_000_000));
+    assert_eq!(shares, MIN_INITIAL_DEPOSIT + 10_000_000);
 }
 
 // ============== WITHDRAW TESTS ==============
