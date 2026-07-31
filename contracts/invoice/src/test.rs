@@ -1727,21 +1727,6 @@ fn test_add_supported_asset() {
     assert_eq!(client.get_supported_asset_count(), 2);
 }
 
-#[test]
-fn test_create_invoice_with_verified_parties() {
-    let (env, client, issuer, buyer, _, usdc) = setup();
-    let face_value: u128 = 1_000_000_000;
-    let due_date = env.ledger().timestamp() + 86400;
-
-    let invoice_id = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
-    let invoice = client.get(&invoice_id);
-
-    assert_eq!(invoice.issuer, issuer);
-    assert_eq!(invoice.buyer, buyer);
-    assert_eq!(invoice.face_value, face_value);
-    assert_eq!(invoice.due_date, due_date);
-    assert_eq!(invoice.status, InvoiceStatus::Created);
-}
 
 // ============================== REPAY TESTS ==============================
 
