@@ -2,11 +2,13 @@
 
 use soroban_sdk::{contract, contractimpl, map, panic_with_error, Address, Env, Map, String, Vec};
 
+mod constants;
 mod errors;
 mod events;
 mod test;
 mod types;
 
+pub use constants::*;
 pub use errors::*;
 pub use types::*;
 
@@ -94,7 +96,9 @@ impl RegistryContract {
         let profile = Profile::new(Role::Issuer, false, env.ledger().timestamp(), metadata);
         let key = DataKey::Profile(address.clone());
         env.storage().persistent().set(&key, &profile);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         events::issuer_registered(&env, &address);
         Self::extend_instance_ttl(&env);
         true
@@ -132,7 +136,9 @@ impl RegistryContract {
             let profile = Profile::new(Role::Issuer, false, env.ledger().timestamp(), map![&env]);
 
             env.storage().persistent().set(&key, &profile);
-            env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
             events::issuer_registered(&env, &address);
             registered += 1;
         }
@@ -189,7 +195,9 @@ impl RegistryContract {
         let profile = Profile::new(Role::Buyer, false, env.ledger().timestamp(), metadata);
         let key = DataKey::Profile(address.clone());
         env.storage().persistent().set(&key, &profile);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         events::buyer_registered(&env, &address);
         Self::extend_instance_ttl(&env);
         true
@@ -268,7 +276,9 @@ impl RegistryContract {
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
         profile.metadata = metadata;
         env.storage().persistent().set(&key, &profile);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         events::metadata_updated(&env, &address);
         true
     }
@@ -400,7 +410,9 @@ impl RegistryContract {
         profile.set_verified(false);
         profile.set_revoked(true);
         env.storage().persistent().set(&key, &profile);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         events::address_revoked(&env, &address);
         Self::extend_instance_ttl(&env);
         true
@@ -476,7 +488,9 @@ impl RegistryContract {
             profile.set_revoked(true);
         }
         env.storage().persistent().set(&key, &profile);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         events::profile_verified(&env, &address, verify);
         Self::extend_instance_ttl(&env);
         true
@@ -553,7 +567,9 @@ impl RegistryContract {
     }
 
     fn extend_instance_ttl(env: &Env) {
-        env.storage().instance().extend_ttl(100, 2_000_000);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     fn validate_metadata(env: &Env, metadata: &Map<String, String>) {

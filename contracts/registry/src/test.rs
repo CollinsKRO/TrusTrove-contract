@@ -2,7 +2,10 @@
 
 extern crate std;
 
-use crate::{DataKey, Profile, RegistryContract, RegistryContractClient, Role, VerificationStatus};
+use crate::{
+    DataKey, Profile, RegistryContract, RegistryContractClient, Role, VerificationStatus,
+    TTL_EXTEND_TO, TTL_THRESHOLD,
+};
 use proptest::prelude::*;
 use proptest::test_runner::{Config as ProptestConfig, TestRunner};
 use soroban_sdk::{
@@ -379,9 +382,11 @@ fn test_update_metadata_wrong_auth_panics() {
         env.storage()
             .persistent()
             .set(&DataKey::Profile(issuer.clone()), &profile);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Profile(issuer.clone()), 100, 2_000_000);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Profile(issuer.clone()),
+            TTL_THRESHOLD,
+            TTL_EXTEND_TO,
+        );
     });
 
     let updated_metadata = map![
