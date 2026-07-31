@@ -107,7 +107,7 @@
                         "symbol": "packed_flags"
                       },
                       "val": {
-                        "u32": 3
+                        "u32": 1
                       }
                     },
                     {
@@ -449,7 +449,7 @@
               }
             ],
             "data": {
-              "bool": true
+              "bool": false
             }
           }
         }

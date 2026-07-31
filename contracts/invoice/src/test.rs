@@ -211,6 +211,60 @@ fn test_create_invoice_with_verified_parties() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #4)")]
+fn test_create_fails_unverified_issuer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let registry_id = env.register_contract(None, MockRegistry);
+    let registry_client = MockRegistryClient::new(&env, &registry_id);
+
+    let issuer = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    registry_client.register(&buyer);
+
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &registry_id);
+
+    let usdc_asset = env.register_contract(None, MockToken);
+    client.add_supported_asset(&usdc_asset);
+
+    let face_value: u128 = 1_000_000_000;
+    let due_date = env.ledger().timestamp() + 86400;
+    client.create(&issuer, &buyer, &face_value, &due_date, &usdc_asset);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_create_fails_unverified_buyer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let registry_id = env.register_contract(None, MockRegistry);
+    let registry_client = MockRegistryClient::new(&env, &registry_id);
+
+    let issuer = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    registry_client.register(&issuer);
+
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &registry_id);
+
+    let usdc_asset = env.register_contract(None, MockToken);
+    client.add_supported_asset(&usdc_asset);
+
+    let face_value: u128 = 1_000_000_000;
+    let due_date = env.ledger().timestamp() + 86400;
+    client.create(&issuer, &buyer, &face_value, &due_date, &usdc_asset);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #6)")]
 fn test_create_fails_zero_face_value() {
     let (env, client, issuer, buyer, _, usdc) = setup();

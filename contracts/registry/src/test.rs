@@ -59,7 +59,7 @@ fn test_register_issuer() {
     assert!(result);
     let profile = client.get_profile(&issuer);
     assert_eq!(profile.role(), crate::Role::Issuer);
-    assert!(profile.verified());
+    assert!(!profile.verified());
 }
 
 #[test]
@@ -73,7 +73,7 @@ fn test_register_buyer() {
     assert!(result);
     let profile = client.get_profile(&buyer);
     assert_eq!(profile.role(), crate::Role::Buyer);
-    assert!(profile.verified());
+    assert!(!profile.verified());
 }
 
 #[test]
@@ -91,13 +91,13 @@ fn test_register_buyer_before_initialize_panics() {
 }
 
 #[test]
-fn test_is_verified_returns_true_for_registered() {
+fn test_is_verified_returns_false_for_registered_but_unverified() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
     client.initialize(&admin);
     let issuer = Address::generate(&env);
     client.register_issuer(&issuer, &map![&env]);
-    assert!(client.is_verified(&issuer));
+    assert!(!client.is_verified(&issuer));
 }
 
 #[test]
@@ -116,6 +116,8 @@ fn test_revoke_sets_verified_false() {
     client.initialize(&admin);
     let issuer = Address::generate(&env);
     client.register_issuer(&issuer, &map![&env]);
+    assert!(!client.is_verified(&issuer));
+    client.verify_profile(&issuer, &true);
     assert!(client.is_verified(&issuer));
     let result = client.revoke(&issuer);
     assert!(result);
@@ -129,25 +131,25 @@ fn test_revoke_already_revoked_returns_true_no_reemit() {
     client.initialize(&admin);
     let issuer = Address::generate(&env);
     client.register_issuer(&issuer, &map![&env]);
-    assert!(client.is_verified(&issuer));
+    assert!(!client.is_verified(&issuer));
 
-    // First revoke — should succeed and set verified to false.
+    // First revoke — should be a no-op (already unverified) and return true.
     let result = client.revoke(&issuer);
     assert!(result);
     assert!(!client.is_verified(&issuer));
     assert_eq!(
         client.get_verification_status(&issuer),
-        VerificationStatus::Revoked
+        VerificationStatus::Pending
     );
 
-    // Second revoke on already-revoked profile — should succeed
+    // Second revoke on already-unverified profile — should succeed
     // without panic and without altering state.
     let result2 = client.revoke(&issuer);
     assert!(result2);
     assert!(!client.is_verified(&issuer));
     assert_eq!(
         client.get_verification_status(&issuer),
-        VerificationStatus::Revoked
+        VerificationStatus::Pending
     );
 }
 
@@ -197,6 +199,8 @@ fn test_re_register_revoked_issuer_panics() {
     client.initialize(&admin);
     let issuer = Address::generate(&env);
     client.register_issuer(&issuer, &map![&env]);
+    assert!(!client.is_verified(&issuer));
+    client.verify_profile(&issuer, &true);
     assert!(client.is_verified(&issuer));
     client.revoke(&issuer);
     assert!(!client.is_verified(&issuer));
@@ -212,6 +216,8 @@ fn test_reinstate_revoked_issuer_restores_verification() {
     client.initialize(&admin);
     let issuer = Address::generate(&env);
     client.register_issuer(&issuer, &map![&env]);
+    assert!(!client.is_verified(&issuer));
+    client.verify_profile(&issuer, &true);
     assert!(client.is_verified(&issuer));
 
     client.revoke(&issuer);
@@ -231,6 +237,8 @@ fn test_reinstate_restores_verified_and_emits_event() {
     client.initialize(&admin);
     let issuer = Address::generate(&env);
     client.register_issuer(&issuer, &map![&env]);
+    assert!(!client.is_verified(&issuer));
+    client.verify_profile(&issuer, &true);
     assert!(client.is_verified(&issuer));
 
     client.revoke(&issuer);
@@ -253,6 +261,11 @@ fn test_reinstate_restores_verified_and_emits_event() {
                 client.address.clone(),
                 (Symbol::new(&env, "issuer_registered"), issuer.clone()).into_val(&env),
                 ().into_val(&env),
+            ),
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "profile_verified"), issuer.clone()).into_val(&env),
+                true.into_val(&env),
             ),
             (
                 client.address.clone(),
@@ -413,7 +426,7 @@ fn test_update_profile_happy_path() {
     let profile = client.get_profile(&issuer);
     assert_eq!(profile.metadata, updated_metadata);
     assert_eq!(profile.role(), crate::Role::Issuer);
-    assert!(profile.verified());
+    assert!(!profile.verified());
 
     assert_eq!(
         env.events().all(),
@@ -531,7 +544,7 @@ fn test_register_issuer_then_buyer_panics() {
     }]);
     client.register_issuer(&issuer, &metadata);
 
-    assert!(client.is_verified(&issuer));
+    assert!(!client.is_verified(&issuer));
     assert_eq!(client.get_profile(&issuer).role(), Role::Issuer);
 
     assert_eq!(
@@ -596,7 +609,7 @@ fn test_register_buyer_then_issuer_panics() {
     }]);
     client.register_buyer(&buyer, &metadata);
 
-    assert!(client.is_verified(&buyer));
+    assert!(!client.is_verified(&buyer));
     assert_eq!(client.get_profile(&buyer).role(), Role::Buyer);
 
     assert_eq!(
@@ -699,9 +712,9 @@ fn test_batch_register_issuers_all_new() {
     let skipped = client.batch_register_issuers(&entries);
     assert_eq!(skipped.len(), 0);
 
-    assert!(client.is_verified(&issuer1));
-    assert!(client.is_verified(&issuer2));
-    assert!(client.is_verified(&issuer3));
+    assert!(!client.is_verified(&issuer1));
+    assert!(!client.is_verified(&issuer2));
+    assert!(!client.is_verified(&issuer3));
 
     assert_eq!(client.get_profile(&issuer1).role(), crate::Role::Issuer);
     assert_eq!(client.get_profile(&issuer2).role(), crate::Role::Issuer);
@@ -757,9 +770,9 @@ fn test_batch_register_issuers_mixed() {
     assert_eq!(skipped.len(), 1);
     assert!(skipped.contains(&issuer1));
 
-    assert!(client.is_verified(&issuer1));
-    assert!(client.is_verified(&issuer2));
-    assert!(client.is_verified(&issuer3));
+    assert!(!client.is_verified(&issuer1));
+    assert!(!client.is_verified(&issuer2));
+    assert!(!client.is_verified(&issuer3));
 }
 
 #[test]
@@ -770,6 +783,11 @@ fn test_verify_profile_updates_status() {
     let issuer = Address::generate(&env);
     client.register_issuer(&issuer, &map![&env]);
 
+    assert!(!client.is_verified(&issuer));
+
+    // Verify
+    let result = client.verify_profile(&issuer, &true);
+    assert!(result);
     assert!(client.is_verified(&issuer));
 
     // Revoke
@@ -816,6 +834,7 @@ fn test_get_verification_status_verified() {
     client.initialize(&admin);
     let issuer = Address::generate(&env);
     client.register_issuer(&issuer, &map![&env]);
+    client.verify_profile(&issuer, &true);
     assert_eq!(
         client.get_verification_status(&issuer),
         VerificationStatus::Verified
@@ -829,6 +848,7 @@ fn test_get_verification_status_revoked() {
     client.initialize(&admin);
     let issuer = Address::generate(&env);
     client.register_issuer(&issuer, &map![&env]);
+    client.verify_profile(&issuer, &true);
     client.revoke(&issuer);
     assert_eq!(
         client.get_verification_status(&issuer),
@@ -837,25 +857,48 @@ fn test_get_verification_status_revoked() {
 }
 
 #[test]
-fn test_get_verification_status_distinguishes_revoked_from_unregistered() {
+fn test_get_verification_status_distinguishes_pending_from_unregistered() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
     client.initialize(&admin);
 
     let never_registered = Address::generate(&env);
-    let revoked = Address::generate(&env);
+    let pending = Address::generate(&env);
 
-    client.register_issuer(&revoked, &map![&env]);
-    client.revoke(&revoked);
+    client.register_issuer(&pending, &map![&env]);
 
     // is_verified returns false for both — indistinguishable
     assert!(!client.is_verified(&never_registered));
-    assert!(!client.is_verified(&revoked));
+    assert!(!client.is_verified(&pending));
 
     // get_verification_status tells them apart
     assert_eq!(
         client.get_verification_status(&never_registered),
         VerificationStatus::Unregistered
+    );
+    assert_eq!(
+        client.get_verification_status(&pending),
+        VerificationStatus::Pending
+    );
+}
+
+#[test]
+fn test_get_verification_status_revoked_distinct_from_pending() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    let pending = Address::generate(&env);
+    let revoked = Address::generate(&env);
+
+    client.register_issuer(&pending, &map![&env]);
+    client.register_issuer(&revoked, &map![&env]);
+    client.verify_profile(&revoked, &true);
+    client.revoke(&revoked);
+
+    assert_eq!(
+        client.get_verification_status(&pending),
+        VerificationStatus::Pending
     );
     assert_eq!(
         client.get_verification_status(&revoked),
@@ -870,6 +913,7 @@ fn test_get_verification_status_re_verified_returns_verified() {
     client.initialize(&admin);
     let issuer = Address::generate(&env);
     client.register_issuer(&issuer, &map![&env]);
+    client.verify_profile(&issuer, &true);
     client.revoke(&issuer);
     assert_eq!(
         client.get_verification_status(&issuer),
@@ -919,8 +963,8 @@ fn prop_is_verified_always_consistent_with_get_verification_status_after_registe
             client.register_issuer(&address, &map![&env]);
             let verified = client.is_verified(&address);
             let status = client.get_verification_status(&address);
-            prop_assert!(verified);
-            prop_assert_eq!(status, VerificationStatus::Verified);
+            prop_assert!(!verified);
+            prop_assert_eq!(status, VerificationStatus::Pending);
             Ok(())
         })
         .unwrap();
@@ -936,6 +980,7 @@ fn prop_revoke_always_sets_is_verified_false_and_status_revoked() {
             client.initialize(&admin);
             let address = Address::generate(&env);
             client.register_issuer(&address, &map![&env]);
+            client.verify_profile(&address, &true);
             client.revoke(&address);
             prop_assert!(!client.is_verified(&address));
             prop_assert_eq!(
@@ -976,6 +1021,7 @@ fn prop_re_verify_after_revoke_restores_verified_state() {
             client.initialize(&admin);
             let address = Address::generate(&env);
             client.register_issuer(&address, &map![&env]);
+            client.verify_profile(&address, &true);
             client.revoke(&address);
             prop_assert_eq!(
                 client.get_verification_status(&address),
@@ -1184,8 +1230,8 @@ fn test_register_issuer_emits_event() {
 
     client.register_issuer(&issuer, &map![&env]);
 
-    // State after: the issuer is registered and verified.
-    assert!(client.is_verified(&issuer));
+    // State after: the issuer is registered but not yet verified.
+    assert!(!client.is_verified(&issuer));
 
     // Registration emits exactly one `issuer_registered` event carrying the
     // issuer address in the topics and an empty data payload.
@@ -1216,8 +1262,8 @@ fn test_register_buyer_emits_event() {
 
     client.register_buyer(&buyer, &map![&env]);
 
-    // State after: the buyer is registered and verified.
-    assert!(client.is_verified(&buyer));
+    // State after: the buyer is registered but not yet verified.
+    assert!(!client.is_verified(&buyer));
 
     // Registration emits exactly one `buyer_registered` event carrying the
     // buyer address in the topics and an empty data payload.
@@ -1246,15 +1292,14 @@ fn test_revoke_emits_event() {
     client.initialize(&admin);
     let issuer = Address::generate(&env);
     client.register_issuer(&issuer, &map![&env]);
+    client.verify_profile(&issuer, &true);
 
     client.revoke(&issuer);
 
     // State after: verification has been revoked.
     assert!(!client.is_verified(&issuer));
 
-    // The full event stream is the `issuer_registered` event from setup
-    // followed by the `address_revoked` event, each carrying the affected
-    // address in the topics and an empty data payload.
+    // The full event stream: registration, admin verification, then revoke.
     assert_eq!(
         env.events().all(),
         vec![
@@ -1268,6 +1313,11 @@ fn test_revoke_emits_event() {
                 client.address.clone(),
                 (Symbol::new(&env, "issuer_registered"), issuer.clone()).into_val(&env),
                 ().into_val(&env),
+            ),
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "profile_verified"), issuer.clone()).into_val(&env),
+                true.into_val(&env),
             ),
             (
                 client.address.clone(),
@@ -1287,6 +1337,9 @@ fn test_get_profile_extends_ttl() {
     client.initialize(&admin);
     let issuer = Address::generate(&env);
     client.register_issuer(&issuer, &map![&env]);
+    // New profiles start unverified (#130) — verify so the read below
+    // exercises a fully-registered profile.
+    client.verify_profile(&issuer, &true);
 
     let contract_id = client.address.clone();
     let key = DataKey::Profile(issuer.clone());
@@ -1330,6 +1383,8 @@ fn test_is_verified_extends_ttl() {
     client.initialize(&admin);
     let issuer = Address::generate(&env);
     client.register_issuer(&issuer, &map![&env]);
+    // New profiles start unverified (#130) — verify so is_verified is true.
+    client.verify_profile(&issuer, &true);
 
     let contract_id = client.address.clone();
     let key = DataKey::Profile(issuer.clone());
@@ -1377,6 +1432,8 @@ fn test_is_verified_does_not_extend_ttl_for_unknown() {
     // Also verify the same function still works for a registered issuer.
     let issuer = Address::generate(&env);
     client.register_issuer(&issuer, &map![&env]);
+    // New profiles start unverified (#130) — verify before asserting.
+    client.verify_profile(&issuer, &true);
     assert!(client.is_verified(&issuer));
 }
 
