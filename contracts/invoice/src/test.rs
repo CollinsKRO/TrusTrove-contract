@@ -307,19 +307,29 @@ fn test_list_fails_discount_too_high() {
 }
 
 #[test]
-fn test_list_for_financing_discount_bps_zero_boundary() {
-    // discount_bps == 0 is currently accepted; see issue #79 for a
-    // companion validation that would turn this into a panic test.
+#[should_panic(expected = "Error(Contract, #12)")]
+fn test_list_for_financing_discount_bps_zero_panics() {
+    // discount_bps == 0 is a 0% yield — nonsensical business state.
+    // Must be rejected with InvalidDiscount (#12).
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &0);
+}
+
+#[test]
+fn test_list_for_financing_discount_bps_min_boundary() {
+    // discount_bps == 1 is the smallest valid value and must succeed.
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
 
-    let result = client.list_for_financing(&invoice_id, &0);
+    let result = client.list_for_financing(&invoice_id, &1);
     assert!(result);
 
     let invoice = client.get(&invoice_id);
     assert_eq!(invoice.status, InvoiceStatus::Listed);
-    assert_eq!(invoice.discount_bps, 0);
+    assert_eq!(invoice.discount_bps, 1);
 
     let contract_id = client.address.clone();
     let events = env.events().all();
@@ -329,7 +339,7 @@ fn test_list_for_financing_discount_bps_zero_boundary() {
         topics,
         (Symbol::new(&env, "invoice_listed"), invoice_id.clone()).into_val(&env)
     );
-    assert_eq!(u32::try_from_val(&env, &data).unwrap(), 0u32);
+    assert_eq!(u32::try_from_val(&env, &data).unwrap(), 1u32);
 }
 
 #[test]
@@ -1539,7 +1549,7 @@ fn prop_any_future_due_date_creates_invoice_successfully() {
 fn prop_discount_bps_within_limit_always_lists_invoice() {
     let mut runner = TestRunner::new(ProptestConfig::with_cases(10));
     runner
-        .run(&(0u32..=5000u32), |discount_bps| {
+        .run(&(1u32..=5000u32), |discount_bps| {
             let (env, client, issuer, buyer, _, usdc) = setup();
             let due_date = env.ledger().timestamp() + 86400;
             let id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);

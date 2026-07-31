@@ -358,6 +358,8 @@ impl InvoiceContract {
     /// # Panics
     /// * `InvoiceError::NotFound` if the invoice does not exist.
     /// * `InvoiceError::InvalidStatusTransition` if invoice status is not `Created`.
+    /// * `InvoiceError::InvalidDiscount` if `discount_bps` is zero (a 0% discount is
+    ///   nonsensical — the pool would fund at face value with zero yield).
     /// * `InvoiceError::DiscountTooHigh` if `discount_bps` is greater than 5000.
     ///
     /// # Returns
@@ -377,6 +379,9 @@ impl InvoiceContract {
         invoice.issuer.require_auth();
         if invoice.status != InvoiceStatus::Created {
             panic_with_error!(&env, InvoiceError::InvalidStatusTransition);
+        }
+        if discount_bps == 0 {
+            panic_with_error!(&env, InvoiceError::InvalidDiscount);
         }
         if discount_bps > 5000 {
             panic_with_error!(&env, InvoiceError::DiscountTooHigh);
