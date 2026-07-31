@@ -931,6 +931,62 @@ fn test_get_verification_status_re_verified_returns_verified() {
     );
 }
 
+// ============== ISSUE #173: TRANSFER ADMIN ==============
+
+#[test]
+fn test_transfer_admin_changes_admin() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.initialize(&admin);
+    client.transfer_admin(&new_admin);
+    assert_eq!(client.get_admin(), new_admin);
+}
+
+#[test]
+#[should_panic]
+fn test_transfer_admin_by_non_admin_panics() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.initialize(&admin);
+    env.set_auths(&[]);
+    client.transfer_admin(&new_admin);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_transfer_admin_before_initialize_panics() {
+    let (env, client) = setup();
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+}
+
+#[test]
+fn test_transfer_admin_emits_event() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.initialize(&admin);
+    client.transfer_admin(&new_admin);
+    assert_eq!(
+        env.events().all(),
+        vec![
+            &env,
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "admin_transferred"), admin.clone()).into_val(&env),
+                new_admin.clone().into_val(&env),
+            ),
+        ]
+    );
+}
+
 // ============== ISSUE #61: TRANSFER OWNERSHIP ==============
 
 #[test]
@@ -1222,6 +1278,61 @@ fn test_metadata_buyer_empty_map_accepted() {
     assert!(result);
     let profile = client.get_profile(&buyer);
     assert_eq!(profile.metadata.len(), 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_register_buyer_rejects_oversized_metadata_key() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let buyer = Address::generate(&env);
+    let long_key = "k".repeat((crate::MAX_METADATA_KEY_LEN + 1) as usize);
+    let metadata = map![
+        &env,
+        (
+            String::from_str(&env, &long_key),
+            String::from_str(&env, "value")
+        )
+    ];
+    client.register_buyer(&buyer, &metadata);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_register_issuer_rejects_oversized_metadata_value() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    let long_value = "v".repeat((crate::MAX_METADATA_VALUE_LEN + 1) as usize);
+    let metadata = map![
+        &env,
+        (
+            String::from_str(&env, "key"),
+            String::from_str(&env, &long_value)
+        )
+    ];
+    client.register_issuer(&issuer, &metadata);
+}
+
+#[test]
+fn test_register_metadata_at_limits_accepted() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let buyer = Address::generate(&env);
+    let key_prefix = "k".repeat((crate::MAX_METADATA_KEY_LEN - 2) as usize);
+    let value = "v".repeat(crate::MAX_METADATA_VALUE_LEN as usize);
+    let mut metadata = map![&env];
+    for i in 0..crate::MAX_METADATA_SIZE {
+        let key = std::format!("{key_prefix}{i:02}");
+        metadata.set(String::from_str(&env, &key), String::from_str(&env, &value));
+    }
+    assert_eq!(metadata.len(), crate::MAX_METADATA_SIZE);
+    assert!(client.register_buyer(&buyer, &metadata));
+    let profile = client.get_profile(&buyer);
+    assert_eq!(profile.metadata.len(), crate::MAX_METADATA_SIZE);
 }
 
 // ============== EVENT-EMISSION TESTS (#188) ==============
