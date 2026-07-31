@@ -1,5 +1,12 @@
 use soroban_sdk::{Address, Env, Symbol};
 
+pub fn contract_initialized(env: &Env, admin: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "contract_initialized"), admin.clone()),
+        (),
+    );
+}
+
 pub fn issuer_registered(env: &Env, address: &Address) {
     env.events()
         .publish((Symbol::new(env, "issuer_registered"), address.clone()), ());
@@ -20,7 +27,6 @@ pub fn address_revoked(env: &Env, address: &Address) {
         .publish((Symbol::new(env, "address_revoked"), address.clone()), ());
 }
 
-#[allow(dead_code)]
 pub fn batch_registered(env: &Env, registered: u32, skipped: u32) {
     env.events().publish(
         (Symbol::new(env, "batch_registered"),),
@@ -35,7 +41,18 @@ pub fn profile_verified(env: &Env, address: &Address, status: bool) {
     );
 }
 
-#[allow(dead_code)]
+pub fn profile_updated(env: &Env, address: &Address) {
+    env.events()
+        .publish((Symbol::new(env, "profile_updated"), address.clone()), ());
+}
+
+pub fn address_reinstated(env: &Env, address: &Address) {
+    env.events().publish(
+        (Symbol::new(env, "address_reinstated"), address.clone()),
+        (),
+    );
+}
+
 pub fn ownership_transferred(env: &Env, old_admin: &Address, new_admin: &Address) {
     env.events().publish(
         (Symbol::new(env, "ownership_transferred"), old_admin.clone()),

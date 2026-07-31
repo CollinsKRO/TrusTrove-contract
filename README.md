@@ -4,6 +4,8 @@
 
 <h1 align="center">TrusTrove — Smart Contracts</h1>
 
+
+
 <p align="center">
   Four Soroban smart contracts powering the TrusTrove trade finance protocol on Stellar.
 </p> 
@@ -16,6 +18,9 @@
 <p align="center">
   <a href="https://github.com/TrusTrove/TrusTrove-contract/actions/workflows/ci.yml">
     <img src="https://img.shields.io/github/actions/workflow/status/TrusTrove/TrusTrove-contract/ci.yml?branch=main&label=build" />
+  </a>
+  <a href="https://codecov.io/gh/TrusTrove/TrusTrove-contract">
+    <img src="https://img.shields.io/codecov/c/github/TrusTrove/TrusTrove-contract?label=coverage" />
   </a>
   <img src="https://img.shields.io/badge/rust-1.85.0-orange" />
   <img src="https://img.shields.io/badge/soroban--sdk-21.7.6-blueviolet" />
@@ -45,6 +50,15 @@ TrusTrove is a decentralized trade finance protocol on Stellar. SMEs tokenize un
 
 Join the contributor community: **[t.me/trusttrove](https://t.me/trusttrove)**
 
+### Maintainer Tooling
+
+Seed-issue generator scripts live in [`scripts/maintainer/`](./scripts/maintainer/):
+
+- `create_issues.py` — generate issues from a template
+- `create-contract-issues.sh` / `create-contract-issues.ps1` — shell/PowerShell helpers
+
+Run any script from the repo root, e.g. `bash scripts/maintainer/create-contract-issues.sh`.
+
 ---
 
 ## Contracts
@@ -64,7 +78,7 @@ revoke(address) → bool
 
 ### invoice_contract
 
-Manages the full invoice lifecycle. Enforces valid state transitions. Emits events consumed by the Go indexer.
+Manages the full invoice lifecycle. Enforces valid state transitions. [Emits events](./docs/EVENTS.md#invoice-contract) consumed by the Go indexer.
 
 ```
 Created → Listed → Funded → Active → Confirmed → Repaid
@@ -72,7 +86,7 @@ Created → Listed → Funded → Active → Confirmed → Repaid
 ```
 
 ```
-create(issuer, buyer, face_value, due_date) → invoice_id
+create(issuer, buyer, face_value, due_date, funding_asset) → invoice_id
 list_for_financing(invoice_id, discount_bps) → bool
 mark_funded(invoice_id, funded_amount) → bool   ← pool_contract only
 mark_shipped(invoice_id) → bool
@@ -229,16 +243,22 @@ Invoice status: → Defaulted
 - `receive_repayment` in the pool is callable only by the registered `invoice_contract`.
 - Every state transition in `invoice_contract` is guarded by an explicit status check; no skipping steps.
 
+> **Detailed references:** [Threat Model](./docs/THREAT_MODEL.md) · [Storage Schema](./docs/STORAGE.md) · [Limitations](./docs/LIMITATIONS.md)
+
 ---
 
 ## Deployed Contracts (Stellar Testnet)
 
+<!-- START_DEPLOYED_ADDRESSES -->
 | Contract | Address |
 |----------|---------|
 | registry_contract | `CABGWVIZFF62FG67ZGFEP67NEEY4WYTMFURDMFTKKNRDAFPKPOJDTN4C` |
 | invoice_contract | `CA4O3MR7LWHRSUDBNU6FY6UDFFYBN7TGBZXBDZB4OYYXFYXIFJ6RJF6B` |
 | escrow_contract | `CAJWGUKDTTC3SKN4RAAY72J4DVIIYSCFHX6GIMNTT22ABMISJK4GBCEH` |
 | pool_contract | `CAKEWH7SJCXGV2MH2WZYIX3QDPTSSBQFXYVYBOWAGLNBBZMPLE2US6CS` |
+<!-- END_DEPLOYED_ADDRESSES -->
+
+> **Note**: Testnet addresses are subject to rotation. See [DEPLOYMENT.md](./DEPLOYMENT.md#contract-address-lifecycle--rotation-policy) for our redeployment and lifecycle policy.
 
 Verify on [Stellar Expert Testnet](https://stellar.expert/explorer/testnet)
 
@@ -252,6 +272,8 @@ Verify on [Stellar Expert Testnet](https://stellar.expert/explorer/testnet)
 - [Stellar CLI](https://github.com/stellar/stellar-cli) (latest)
 
 ### 1. Install Rust 1.85.0
+
+The repo ships a `rust-toolchain.toml` at the root pinning channel `1.85.0` and target `wasm32v1-none`. `rustup` picks it up automatically when you run any `cargo`/`rustc` command in this directory — you do not have to set a default. If the toolchain isn't installed yet, run:
 
 ```bash
 rustup toolchain install 1.85.0
@@ -274,6 +296,9 @@ cargo test --workspace
 
 ### 4. Deploy to testnet
 
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for the full deployment
+guide including prerequisites, contract wiring order, and rollback.
+
 ```bash
 # Create and fund a deployer account
 bash scripts/setup-testnet.sh
@@ -284,7 +309,26 @@ bash scripts/setup-testnet.sh
 bash scripts/deploy.sh
 ```
 
+Or on Windows (PowerShell):
+
+```powershell
+./scripts/setup-testnet.ps1
+./scripts/deploy.ps1
+```
+
 The deploy script prints all four contract IDs at the end. Paste them into `TrusTrove-app/.env.local`.
+
+#### Stellar CLI Setup (Linux, macOS, Windows)
+
+The deploy script requires the Stellar CLI. Choose one:
+
+- **Linux/macOS:** Install globally per [Stellar docs](https://developers.stellar.org/docs/learn/developing-with-soroban/setup) — the script will find it on `PATH`.
+- **Windows (native):** Use the PowerShell scripts (`scripts/setup-testnet.ps1` and `scripts/deploy.ps1`). Install the Stellar CLI to `Program Files (x86)\Stellar CLI\`, or set `STELLAR_BIN` environment variable. Run from PowerShell:
+  ```powershell
+  powershell ./scripts/setup-testnet.ps1
+  powershell ./scripts/deploy.ps1
+  ```
+- **Windows (WSL):** Install Stellar CLI in your WSL environment, or install on Windows host and set `STELLAR_BIN` to the Windows path (e.g., `/mnt/c/Program Files (x86)/Stellar CLI/stellar.exe`).
 
 ---
 
@@ -326,6 +370,16 @@ The goal is LP-governed capital allocation:
 
 If you want to contribute to governance design, open an issue tagged `complexity:high` and link your proposal.
 
+### `trigger_default` is admin-gated, not time-based
+
+`invoice::trigger_default` requires `admin.require_auth()`. Although the on-chain eligibility check enforces `now >= due_date`, the function is **not** an automatic time-based trigger — an admin must explicitly call it. This creates a single point of control over declaring defaults.
+
+**Risk:** Delays or failure to call `trigger_default` in time prevents the pool from recovering funds via `escrow::handle_default`, which could harm LP returns. A compromised admin could also misuse this power.
+
+**Current design rationale:** A human-in-the-loop check before declaring a default prevents accidental defaults from clock drift, chain reorgs, or misconfigured automation. It also allows for off-chain negotiations (grace periods, extensions) before a default is formally recorded.
+
+**Roadmap:** Introduce a permissionless time-based default mechanism where any caller can trigger a default for an invoice past its `due_date + grace_period`, without requiring admin authorization. The admin would retain only an override capability (e.g., to halt a false default).
+
 ### No emergency pause mechanism
 
 There is currently no circuit breaker. If a critical bug is found post-deployment the only recourse is to stop directing traffic to the affected contracts via the frontend.
@@ -344,6 +398,15 @@ Issues are labeled by contract and complexity:
 - `complexity:low` — isolated function or test, good entry point
 - `complexity:medium` — touches contract logic and storage
 - `complexity:high` — cross-contract interactions or new mechanics
+
+### Architecture Docs
+
+Detailed references for contributors and integrators:
+
+- [Threat Model](./docs/THREAT_MODEL.md) — trust assumptions, auth gates, attack vectors
+- [Storage Schema](./docs/STORAGE.md) — on-chain data layout, TTL patterns, gas estimates
+- [Limitations](./docs/LIMITATIONS.md) — testnet constraints, known gaps, unhandled edge cases
+- [Event Catalog](./docs/EVENTS.md) — every emitted event, topics, data schema, and emitting contract
 
 ### Key conventions
 
@@ -366,7 +429,7 @@ If you have questions, reach us on Telegram: **[t.me/trusttrove](https://t.me/tr
 
 ## License
 
-MIT
+MIT — see [CHANGELOG.md](./CHANGELOG.md) for version history.
 
 ---
 
