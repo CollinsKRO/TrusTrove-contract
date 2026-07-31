@@ -2026,12 +2026,6 @@ fn test_create_fails_self_invoicing() {
 fn test_create_writes_to_issuer_index() {
     // Verifies that `create` stores the invoice ID in the issuer's index,
     // both via a direct storage read and the public `get_by_issuer` query.
-// ============================================================================
-// View Functions Initialization & Missing Invoice Tests (Issue #465)
-// ============================================================================
-
-#[test]
-fn test_view_functions_initialized_existing_invoice() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let face_value: u128 = 1_000_000_000;
     let due_date = env.ledger().timestamp() + 86400;
@@ -2223,7 +2217,7 @@ fn test_create_indexes_emit_invoice_created_event() {
 
     client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
 
-    let contract_id = client.address;
+    let contract_id = client.address.clone();
     let events = env.events().all();
 
     // Should have at least one event; the last one should be invoice_created
@@ -2237,6 +2231,19 @@ fn test_create_indexes_emit_invoice_created_event() {
     // Data: face_value as u128
     let stored_value: u128 = u128::try_from_val(&env, &data).unwrap();
     assert_eq!(stored_value, face_value);
+}
+
+// ============================================================================
+// View Functions Initialization & Missing Invoice Tests (Issue #465)
+// ============================================================================
+
+#[test]
+fn test_view_functions_initialized_existing_invoice() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let face_value: u128 = 1_000_000_000;
+    let due_date = env.ledger().timestamp() + 86400;
+
+    let invoice_id = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
     client.list_for_financing(&invoice_id, &250);
 
     assert_eq!(client.get_issuer(&invoice_id), issuer);
