@@ -35,6 +35,14 @@ fn test_initialize() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #4)")]
+fn test_get_admin_before_initialize_panics_with_not_initialized() {
+    let (_env, client) = setup();
+    // get_admin should panic with NotInitialized (#4) instead of NotFound (#3)
+    client.get_admin();
+}
+
+#[test]
 fn test_register_issuer() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
