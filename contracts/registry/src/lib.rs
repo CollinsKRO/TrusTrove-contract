@@ -10,22 +10,12 @@ mod types;
 pub use errors::*;
 pub use types::*;
 
-const MAX_METADATA_ENTRIES: u32 = 32;
-const MAX_METADATA_KEY_LEN: u32 = 64;
-const MAX_METADATA_VALUE_LEN: u32 = 512;
-
-fn validate_metadata(env: &Env, metadata: &Map<String, String>) {
-    if metadata.len() > MAX_METADATA_ENTRIES {
-        panic_with_error!(env, RegistryError::InvalidMetadata);
-    }
-    for (key, value) in metadata.iter() {
-        if key.len() > MAX_METADATA_KEY_LEN || value.len() > MAX_METADATA_VALUE_LEN {
-            panic_with_error!(env, RegistryError::InvalidMetadata);
-        }
-    }
-}
 /// Maximum number of entries allowed in a metadata map.
 const MAX_METADATA_SIZE: u32 = 20;
+/// Maximum length of a single metadata key.
+const MAX_METADATA_KEY_LEN: u32 = 64;
+/// Maximum length of a single metadata value.
+const MAX_METADATA_VALUE_LEN: u32 = 512;
 
 #[contract]
 pub struct RegistryContract;
@@ -81,8 +71,10 @@ impl RegistryContract {
     ///
     /// # Panics
     /// * `RegistryError::NotInitialized` if the contract has not been initialized.
-    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds `MAX_METADATA_SIZE`
-    ///   entries or contains an empty key or value.
+    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds
+    ///   `MAX_METADATA_SIZE` entries, contains an empty key or value, or has a
+    ///   key longer than `MAX_METADATA_KEY_LEN` or a value longer than
+    ///   `MAX_METADATA_VALUE_LEN`.
     /// * `RegistryError::AlreadyRegistered` if a profile is already stored
     ///   for `address`.
     ///
@@ -97,7 +89,6 @@ impl RegistryContract {
         Self::require_initialized(&env);
         Self::validate_metadata(&env, &metadata);
         address.require_auth();
-        validate_metadata(&env, &metadata);
         if env
             .storage()
             .persistent()
@@ -175,8 +166,10 @@ impl RegistryContract {
     ///
     /// # Panics
     /// * `RegistryError::NotInitialized` if the contract has not been initialized.
-    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds `MAX_METADATA_SIZE`
-    ///   entries or contains an empty key or value.
+    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds
+    ///   `MAX_METADATA_SIZE` entries, contains an empty key or value, or has a
+    ///   key longer than `MAX_METADATA_KEY_LEN` or a value longer than
+    ///   `MAX_METADATA_VALUE_LEN`.
     /// * `RegistryError::AlreadyRegistered` if a profile is already stored
     ///   for `address`.
     ///
@@ -191,7 +184,6 @@ impl RegistryContract {
         Self::require_initialized(&env);
         Self::validate_metadata(&env, &metadata);
         address.require_auth();
-        validate_metadata(&env, &metadata);
         if env
             .storage()
             .persistent()
@@ -225,7 +217,9 @@ impl RegistryContract {
     ///
     /// # Panics
     /// * `RegistryError::InvalidMetadata` if `metadata` exceeds
-    ///   `MAX_METADATA_SIZE` entries or contains an empty key or value.
+    ///   `MAX_METADATA_SIZE` entries, contains an empty key or value, or has a
+    ///   key longer than `MAX_METADATA_KEY_LEN` or a value longer than
+    ///   `MAX_METADATA_VALUE_LEN`.
     /// * `RegistryError::NotRegistered` if no profile exists for `address`.
     ///
     /// # Returns
@@ -262,8 +256,10 @@ impl RegistryContract {
     /// * `bool` - `true` when metadata is updated successfully.
     ///
     /// # Panics
-    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds `MAX_METADATA_SIZE`
-    ///   entries or contains an empty key or value.
+    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds
+    ///   `MAX_METADATA_SIZE` entries, contains an empty key or value, or has a
+    ///   key longer than `MAX_METADATA_KEY_LEN` or a value longer than
+    ///   `MAX_METADATA_VALUE_LEN`.
     /// * `RegistryError::NotFound` if the address is not registered.
     ///
     /// # Example
@@ -565,14 +561,12 @@ impl RegistryContract {
         if metadata.len() > MAX_METADATA_SIZE {
             panic_with_error!(env, RegistryError::InvalidMetadata);
         }
-        for key in metadata.keys().iter() {
-            if key.is_empty() {
+        for (key, value) in metadata.iter() {
+            if key.is_empty() || value.is_empty() {
                 panic_with_error!(env, RegistryError::InvalidMetadata);
             }
-            if let Some(value) = metadata.get(key) {
-                if value.is_empty() {
-                    panic_with_error!(env, RegistryError::InvalidMetadata);
-                }
+            if key.len() > MAX_METADATA_KEY_LEN || value.len() > MAX_METADATA_VALUE_LEN {
+                panic_with_error!(env, RegistryError::InvalidMetadata);
             }
         }
     }

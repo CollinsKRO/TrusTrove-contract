@@ -1,10 +1,5 @@
 #![cfg(test)]
 
-extern crate alloc;
-
-use crate::{RegistryContract, RegistryContractClient};
-use alloc::format;
-use soroban_sdk::{map, testutils::Address as _, Address, Env, String};
 extern crate std;
 
 use crate::{DataKey, Profile, RegistryContract, RegistryContractClient, Role, VerificationStatus};
@@ -653,8 +648,6 @@ fn test_get_profile_unknown_panics() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #5)")]
-fn test_register_issuer_rejects_excess_metadata_entries() {
 fn test_batch_register_issuers_empty_vec() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
@@ -1082,11 +1075,6 @@ fn test_metadata_oversize_map_panics() {
     client.initialize(&admin);
     let issuer = Address::generate(&env);
     let mut metadata = map![&env];
-    for i in 0..=crate::MAX_METADATA_ENTRIES {
-        metadata.set(
-            String::from_str(&env, &format!("key_{i:02}")),
-            String::from_str(&env, "value"),
-        );
     for i in 0..21 {
         let key = String::from_str(&env, &std::format!("key_{}", i));
         let value = String::from_str(&env, &std::format!("value_{}", i));
@@ -1096,26 +1084,6 @@ fn test_metadata_oversize_map_panics() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #5)")]
-fn test_register_buyer_rejects_oversized_metadata_key() {
-    let (env, client) = setup();
-    let admin = Address::generate(&env);
-    client.initialize(&admin);
-    let buyer = Address::generate(&env);
-    let long_key = "k".repeat((crate::MAX_METADATA_KEY_LEN + 1) as usize);
-    let metadata = map![
-        &env,
-        (
-            String::from_str(&env, &long_key),
-            String::from_str(&env, "value")
-        )
-    ];
-    client.register_buyer(&buyer, &metadata);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #5)")]
-fn test_register_issuer_rejects_oversized_metadata_value() {
 #[should_panic(expected = "Error(Contract, #6)")]
 fn test_metadata_oversize_map_via_update_panics() {
     let (env, client) = setup();
@@ -1154,13 +1122,6 @@ fn test_metadata_empty_value_panics() {
     let admin = Address::generate(&env);
     client.initialize(&admin);
     let issuer = Address::generate(&env);
-    let long_value = "v".repeat((crate::MAX_METADATA_VALUE_LEN + 1) as usize);
-    let metadata = map![
-        &env,
-        (
-            String::from_str(&env, "key"),
-            String::from_str(&env, &long_value)
-        )
     let metadata = map![
         &env,
         (String::from_str(&env, "key"), String::from_str(&env, ""),)
@@ -1169,7 +1130,6 @@ fn test_metadata_empty_value_panics() {
 }
 
 #[test]
-fn test_register_buyer_accepts_metadata_at_limits() {
 #[should_panic(expected = "Error(Contract, #6)")]
 fn test_metadata_empty_key_via_update_panics() {
     let (env, client) = setup();
@@ -1207,19 +1167,65 @@ fn test_metadata_buyer_empty_map_accepted() {
     let admin = Address::generate(&env);
     client.initialize(&admin);
     let buyer = Address::generate(&env);
-    let value = "v".repeat(crate::MAX_METADATA_VALUE_LEN as usize);
-    let mut metadata = map![&env];
-    for i in 0..crate::MAX_METADATA_ENTRIES {
-        metadata.set(
-            String::from_str(&env, &format!("key_{i:02}")),
-            String::from_str(&env, &value),
-        );
-    }
-    assert!(client.register_buyer(&buyer, &metadata));
     let result = client.register_buyer(&buyer, &map![&env]);
     assert!(result);
     let profile = client.get_profile(&buyer);
     assert_eq!(profile.metadata.len(), 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_register_buyer_rejects_oversized_metadata_key() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let buyer = Address::generate(&env);
+    let long_key = "k".repeat((crate::MAX_METADATA_KEY_LEN + 1) as usize);
+    let metadata = map![
+        &env,
+        (
+            String::from_str(&env, &long_key),
+            String::from_str(&env, "value")
+        )
+    ];
+    client.register_buyer(&buyer, &metadata);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_register_issuer_rejects_oversized_metadata_value() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    let long_value = "v".repeat((crate::MAX_METADATA_VALUE_LEN + 1) as usize);
+    let metadata = map![
+        &env,
+        (
+            String::from_str(&env, "key"),
+            String::from_str(&env, &long_value)
+        )
+    ];
+    client.register_issuer(&issuer, &metadata);
+}
+
+#[test]
+fn test_register_metadata_at_limits_accepted() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let buyer = Address::generate(&env);
+    let key_prefix = "k".repeat((crate::MAX_METADATA_KEY_LEN - 2) as usize);
+    let value = "v".repeat(crate::MAX_METADATA_VALUE_LEN as usize);
+    let mut metadata = map![&env];
+    for i in 0..crate::MAX_METADATA_SIZE {
+        let key = std::format!("{key_prefix}{i:02}");
+        metadata.set(String::from_str(&env, &key), String::from_str(&env, &value));
+    }
+    assert_eq!(metadata.len(), crate::MAX_METADATA_SIZE);
+    assert!(client.register_buyer(&buyer, &metadata));
+    let profile = client.get_profile(&buyer);
+    assert_eq!(profile.metadata.len(), crate::MAX_METADATA_SIZE);
 }
 
 // ============== EVENT-EMISSION TESTS (#188) ==============
