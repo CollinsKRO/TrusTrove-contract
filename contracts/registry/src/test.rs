@@ -942,6 +942,11 @@ fn test_transfer_admin_emits_event() {
             &env,
             (
                 client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
+            (
+                client.address.clone(),
                 (Symbol::new(&env, "admin_transferred"), admin.clone()).into_val(&env),
                 new_admin.clone().into_val(&env),
             ),
