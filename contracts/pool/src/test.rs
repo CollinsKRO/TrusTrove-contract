@@ -619,6 +619,24 @@ fn test_utilization_rate_after_funding() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #13)")]
+fn test_get_utilization_rate_rejects_overflow() {
+    let te = setup();
+    te.env.as_contract(&te.pool_id, || {
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalDeposits, &u128::MAX);
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalFunded, &(u128::MAX / 10_000 + 1));
+    });
+
+    let _ = te.pool.get_utilization_rate();
+}
+
+#[test]
 fn test_utilization_rate_calculates_correctly() {
     let te = setup();
     te.pool.deposit(&te.lp, &10_000_000_000);
@@ -659,6 +677,28 @@ fn test_updated_max_utilization_reflected_in_stats() {
     te.pool.set_max_utilization(&te.admin, &9000);
     let stats = te.pool.get_stats();
     assert_eq!(stats.max_utilization_bps, 9000);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #13)")]
+fn test_fund_invoice_rejects_utilization_overflow() {
+    let te = setup();
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+    // Set both TotalDeposits and TotalFunded near u128::MAX so that
+    // `available = total_deposits - total_funded` does not underflow,
+    // but `new_total_funded * 10_000` overflows in the utilization check.
+    te.env.as_contract(&te.pool_id, || {
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalDeposits, &u128::MAX);
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalFunded, &(u128::MAX / 10_000 + 1));
+    });
+
+    let _ = te.pool.fund_invoice(&invoice_id);
 }
 
 #[test]
