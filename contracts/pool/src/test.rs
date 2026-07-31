@@ -5,7 +5,7 @@ use soroban_sdk::{
     testutils::{
         storage::Instance as _, Address as _, Events as _, Ledger, MockAuth, MockAuthInvoke,
     },
-    Address, BytesN, Env, IntoVal, Symbol, TryFromVal,
+    Address, BytesN, Env, IntoVal, Symbol, TryFromVal, Vec,
 };
 
 use crate::{DataKey, PoolContract, PoolContractClient};
