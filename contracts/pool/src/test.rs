@@ -141,7 +141,7 @@ fn setup() -> TestEnv {
     pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id);
 
     let escrow = RealEscrowClient::new(&env, &escrow_id);
-    escrow.initialize(&admin, &pool_id, &invoice_id, &usdc_id);
+    escrow.initialize(&admin, &pool_id, &usdc_id);
 
     invoice.add_supported_asset(&usdc_id);
     invoice.add_supported_asset(&xlm_id);
@@ -666,6 +666,24 @@ fn test_utilization_rate_after_funding() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #13)")]
+fn test_get_utilization_rate_rejects_overflow() {
+    let te = setup();
+    te.env.as_contract(&te.pool_id, || {
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalDeposits, &u128::MAX);
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalFunded, &(u128::MAX / 10_000 + 1));
+    });
+
+    let _ = te.pool.get_utilization_rate();
+}
+
+#[test]
 fn test_utilization_rate_calculates_correctly() {
     let te = setup();
     te.pool.deposit(&te.lp, &10_000_000_000);
@@ -695,7 +713,7 @@ fn test_default_max_utilization_in_stats() {
     let pool_id = env.register_contract(None, PoolContract);
     let pool = PoolContractClient::new(&env, &pool_id);
     pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id);
-    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &invoice_id, &usdc_id);
+    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &usdc_id);
     let stats = pool.get_stats();
     assert_eq!(stats.max_utilization_bps, 8500);
 }
@@ -706,6 +724,28 @@ fn test_updated_max_utilization_reflected_in_stats() {
     te.pool.set_max_utilization(&te.admin, &9000);
     let stats = te.pool.get_stats();
     assert_eq!(stats.max_utilization_bps, 9000);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #13)")]
+fn test_fund_invoice_rejects_utilization_overflow() {
+    let te = setup();
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+    // Set both TotalDeposits and TotalFunded near u128::MAX so that
+    // `available = total_deposits - total_funded` does not underflow,
+    // but `new_total_funded * 10_000` overflows in the utilization check.
+    te.env.as_contract(&te.pool_id, || {
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalDeposits, &u128::MAX);
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalFunded, &(u128::MAX / 10_000 + 1));
+    });
+
+    let _ = te.pool.fund_invoice(&invoice_id);
 }
 
 #[test]
@@ -1105,7 +1145,9 @@ fn test_handle_default_rejects_double_default() {
         .set_timestamp(te.env.ledger().timestamp() + 60);
 
     assert!(te.pool.handle_default(&invoice_id));
-    assert!(!te.pool.handle_default(&invoice_id));
+    // Second call should panic with InvoiceNotFound since the funded key was removed
+    let res = te.pool.try_handle_default(&invoice_id);
+    assert!(res.is_err());
 }
 
 #[test]
@@ -1124,16 +1166,11 @@ fn test_handle_default_requires_invoice_contract_authorization() {
 }
 
 #[test]
-fn test_handle_default_unknown_invoice_returns_false() {
+#[should_panic(expected = "Error(Contract, #10)")]
+fn test_handle_default_unknown_invoice_panics() {
     let te = setup();
     let dummy_id = BytesN::from_array(&te.env, &[0u8; 32]);
-    let before = te.pool.get_stats();
-    let result = te.pool.handle_default(&dummy_id);
-    assert!(!result);
-    assert_eq!(
-        te.pool.get_stats().total_loss_realised,
-        before.total_loss_realised
-    );
+    te.pool.handle_default(&dummy_id);
 }
 
 #[test]
@@ -1680,17 +1717,11 @@ fn test_double_initialize_panics() {
         invoke: &MockAuthInvoke {
             contract: &escrow_id,
             fn_name: "initialize",
-            args: (
-                admin.clone(),
-                pool_id.clone(),
-                invoice_id.clone(),
-                usdc_id.clone(),
-            )
-                .into_val(&env),
+            args: (admin.clone(), pool_id.clone(), usdc_id.clone()).into_val(&env),
             sub_invokes: &[],
         },
     }]);
-    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &invoice_id, &usdc_id);
+    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &usdc_id);
 
     // First pool initialize — succeeds with explicit auth
     env.mock_auths(&[MockAuth {

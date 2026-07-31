@@ -354,6 +354,7 @@ impl PoolContract {
     /// * `InvalidAmount` if the computed funded amount is zero.
     /// * `InsufficientLiquidity` if the pool does not have enough funds.
     /// * `UtilizationCapExceeded` if funding would push utilization above the cap.
+    /// * `Overflow` if the resulting utilization calculation overflows `u128`.
     ///
     /// # Returns
     /// * `bool` - `true` when the invoice is funded.
@@ -420,9 +421,8 @@ impl PoolContract {
 
         let max_utilization_bps = totals.max_utilization_bps;
         let new_total_funded = total_funded + funded_amount;
-        let utilization_after = (new_total_funded * 10000)
-            .checked_div(total_deposits)
-            .unwrap_or(0) as u32;
+        let utilization_after =
+            Self::utilization_bps_or_panic(&env, new_total_funded, total_deposits);
         if utilization_after > max_utilization_bps {
             panic_with_error!(&env, PoolError::UtilizationCapExceeded);
         }
@@ -639,11 +639,12 @@ impl PoolContract {
     /// invoke this entry point.
     ///
     /// # Panics
+    /// * `InvoiceNotFound` if no funded invoice entry exists for `invoice_id`.
     /// * `ActiveCountUnderflow` if the active-invoice counter would underflow
     ///   (e.g. double-default of the same invoice).
     ///
     /// # Returns
-    /// * `bool` - `true` when default handling completes, `false` if invoice is not funded.
+    /// * `bool` - `true` when default handling completes.
     ///
     /// # Example
     /// ```ignore
@@ -655,7 +656,7 @@ impl PoolContract {
 
         let funded_key = DataKey::FundedInvoice(invoice_id.clone());
         if !env.storage().persistent().has(&funded_key) {
-            return false;
+            panic_with_error!(&env, PoolError::InvoiceNotFound);
         }
         let funded_amount: u128 = env.storage().persistent().get(&funded_key).unwrap();
 
@@ -809,10 +810,11 @@ impl PoolContract {
     /// No authorization is required.
     ///
     /// # Panics
-    /// This function does not panic; returns `0` when `total_deposits` is zero.
+    /// * `Overflow` if scaling `total_funded` into basis points would overflow.
     ///
     /// # Returns
-    /// * `u32` - The utilization rate in basis points (`total_funded * 10_000 / total_deposits`).
+    /// * `u32` - The utilization rate in basis points, or `0` when
+    ///   `total_deposits` is zero.
     ///
     /// # Example
     /// ```ignore
@@ -820,12 +822,7 @@ impl PoolContract {
     /// ```
     pub fn get_utilization_rate(env: Env) -> u32 {
         let totals = Self::totals(&env);
-        let total_deposits = totals.deposits;
-        let total_funded = totals.funded;
-        if total_deposits == 0 {
-            return 0;
-        }
-        (total_funded * 10000 / total_deposits) as u32
+        Self::utilization_bps_or_panic(&env, totals.funded, totals.deposits)
     }
 
     pub fn set_max_utilization(env: Env, admin: Address, new_cap_bps: u32) -> bool {

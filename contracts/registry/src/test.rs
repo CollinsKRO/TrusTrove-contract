@@ -7,7 +7,10 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config as ProptestConfig, TestRunner};
 use soroban_sdk::{
     map,
-    testutils::{Address as _, Events as _},
+    testutils::{
+        storage::{Instance as _, Persistent as _},
+        Address as _, Events as _, Ledger,
+    },
     vec, Address, Env, IntoVal, String, Symbol, Vec,
 };
 
@@ -25,6 +28,10 @@ fn test_initialize() {
     let admin = Address::generate(&env);
     client.initialize(&admin);
     assert_eq!(client.get_admin(), admin);
+
+    // Assert the contract_initialized event was emitted
+    let all_events = env.events().all();
+    assert_eq!(all_events.len(), 1);
 }
 
 #[test]
@@ -108,6 +115,35 @@ fn test_revoke_sets_verified_false() {
 }
 
 #[test]
+fn test_revoke_already_revoked_returns_true_no_reemit() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    client.register_issuer(&issuer, &map![&env]);
+    assert!(client.is_verified(&issuer));
+
+    // First revoke — should succeed and set verified to false.
+    let result = client.revoke(&issuer);
+    assert!(result);
+    assert!(!client.is_verified(&issuer));
+    assert_eq!(
+        client.get_verification_status(&issuer),
+        VerificationStatus::Revoked
+    );
+
+    // Second revoke on already-revoked profile — should succeed
+    // without panic and without altering state.
+    let result2 = client.revoke(&issuer);
+    assert!(result2);
+    assert!(!client.is_verified(&issuer));
+    assert_eq!(
+        client.get_verification_status(&issuer),
+        VerificationStatus::Revoked
+    );
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #3)")]
 fn test_revoke_unregistered_panics() {
     let (env, client) = setup();
@@ -127,13 +163,7 @@ fn test_revoke_wrong_auth_panics() {
     let admin = Address::generate(&env);
     let issuer = Address::generate(&env);
     let metadata = map![&env];
-    let profile = Profile::new(
-        issuer.clone(),
-        Role::Issuer,
-        true,
-        env.ledger().timestamp(),
-        metadata,
-    );
+    let profile = Profile::new(Role::Issuer, true, env.ledger().timestamp(), metadata);
 
     env.as_contract(&contract_id, || {
         env.storage().instance().set(&DataKey::Admin, &admin);
@@ -208,6 +238,11 @@ fn test_reinstate_restores_verified_and_emits_event() {
             &env,
             (
                 client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
+            (
+                client.address.clone(),
                 (Symbol::new(&env, "issuer_registered"), issuer.clone()).into_val(&env),
                 ().into_val(&env),
             ),
@@ -235,13 +270,7 @@ fn test_reinstate_wrong_auth_panics() {
     let admin = Address::generate(&env);
     let issuer = Address::generate(&env);
     let metadata = map![&env];
-    let profile = Profile::new(
-        issuer.clone(),
-        Role::Issuer,
-        false,
-        env.ledger().timestamp(),
-        metadata,
-    );
+    let profile = Profile::new(Role::Issuer, false, env.ledger().timestamp(), metadata);
 
     env.as_contract(&contract_id, || {
         env.storage().instance().set(&DataKey::Admin, &admin);
@@ -323,13 +352,7 @@ fn test_update_metadata_wrong_auth_panics() {
             String::from_str(&env, "Acme Corp"),
         )
     ];
-    let profile = Profile::new(
-        issuer.clone(),
-        Role::Issuer,
-        true,
-        env.ledger().timestamp(),
-        metadata,
-    );
+    let profile = Profile::new(Role::Issuer, true, env.ledger().timestamp(), metadata);
 
     env.as_contract(&contract_id, || {
         env.storage()
@@ -390,6 +413,11 @@ fn test_update_profile_happy_path() {
             &env,
             (
                 client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
+            (
+                client.address.clone(),
                 (Symbol::new(&env, "issuer_registered"), issuer.clone()).into_val(&env),
                 ().into_val(&env),
             ),
@@ -417,13 +445,7 @@ fn test_update_profile_wrong_auth_panics() {
             String::from_str(&env, "Acme Corp"),
         )
     ];
-    let profile = Profile::new(
-        issuer.clone(),
-        Role::Issuer,
-        true,
-        env.ledger().timestamp(),
-        metadata,
-    );
+    let profile = Profile::new(Role::Issuer, true, env.ledger().timestamp(), metadata);
 
     env.as_contract(&contract_id, || {
         env.storage()
@@ -510,6 +532,11 @@ fn test_register_issuer_then_buyer_panics() {
             &env,
             (
                 client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
+            (
+                client.address.clone(),
                 (Symbol::new(&env, "issuer_registered"), issuer.clone()).into_val(&env),
                 ().into_val(&env),
             ),
@@ -568,6 +595,11 @@ fn test_register_buyer_then_issuer_panics() {
         env.events().all(),
         vec![
             &env,
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
             (
                 client.address.clone(),
                 (Symbol::new(&env, "buyer_registered"), buyer.clone()).into_val(&env),
@@ -969,26 +1001,26 @@ fn test_batch_register_issuers_exceeds_limit() {
 #[test]
 fn test_profile_packing_correctness() {
     let env = Env::default();
-    let addr = Address::generate(&env);
+    let _addr = Address::generate(&env);
     let metadata = map![&env];
 
     // Issuer, verified = true
-    let p1 = Profile::new(addr.clone(), Role::Issuer, true, 100, metadata.clone());
+    let p1 = Profile::new(Role::Issuer, true, 100, metadata.clone());
     assert_eq!(p1.role(), Role::Issuer);
     assert!(p1.verified());
 
     // Issuer, verified = false
-    let p2 = Profile::new(addr.clone(), Role::Issuer, false, 100, metadata.clone());
+    let p2 = Profile::new(Role::Issuer, false, 100, metadata.clone());
     assert_eq!(p2.role(), Role::Issuer);
     assert!(!p2.verified());
 
     // Buyer, verified = true
-    let p3 = Profile::new(addr.clone(), Role::Buyer, true, 100, metadata.clone());
+    let p3 = Profile::new(Role::Buyer, true, 100, metadata.clone());
     assert_eq!(p3.role(), Role::Buyer);
     assert!(p3.verified());
 
     // Buyer, verified = false
-    let p4 = Profile::new(addr.clone(), Role::Buyer, false, 100, metadata.clone());
+    let p4 = Profile::new(Role::Buyer, false, 100, metadata.clone());
     assert_eq!(p4.role(), Role::Buyer);
     assert!(!p4.verified());
 }
@@ -1155,6 +1187,11 @@ fn test_register_issuer_emits_event() {
             &env,
             (
                 client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
+            (
+                client.address.clone(),
                 (Symbol::new(&env, "issuer_registered"), issuer.clone()).into_val(&env),
                 ().into_val(&env),
             ),
@@ -1180,6 +1217,11 @@ fn test_register_buyer_emits_event() {
         env.events().all(),
         vec![
             &env,
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
             (
                 client.address.clone(),
                 (Symbol::new(&env, "buyer_registered"), buyer.clone()).into_val(&env),
@@ -1211,6 +1253,11 @@ fn test_revoke_emits_event() {
             &env,
             (
                 client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
+            (
+                client.address.clone(),
                 (Symbol::new(&env, "issuer_registered"), issuer.clone()).into_val(&env),
                 ().into_val(&env),
             ),
@@ -1220,5 +1267,142 @@ fn test_revoke_emits_event() {
                 ().into_val(&env),
             ),
         ]
+    );
+}
+
+// ============== ISSUE #179: TTL EXTENSION ON READ ==============
+
+#[test]
+fn test_get_profile_extends_ttl() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    client.register_issuer(&issuer, &map![&env]);
+
+    let contract_id = client.address.clone();
+    let key = DataKey::Profile(issuer.clone());
+
+    // Record the initial remaining TTL, then advance the ledger so the
+    // remaining TTL drops below the write-path threshold (100 ledgers).
+    let ttl_before_drain: u32 =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
+    // Advance to leave ~50 ledgers remaining.
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + ttl_before_drain - 50);
+
+    let ttl_before_read: u32 =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
+    assert!(
+        ttl_before_read < 100,
+        "TTL should be below threshold before read, got {ttl_before_read}"
+    );
+
+    // Read the profile — this should extend the entry's TTL.
+    let profile = client.get_profile(&issuer);
+    assert!(profile.verified());
+
+    let ttl_after_read: u32 =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
+
+    assert!(
+        ttl_after_read > ttl_before_read,
+        "get_profile should extend TTL: before={ttl_before_read}, after={ttl_after_read}"
+    );
+    assert!(
+        ttl_after_read >= 1_999_000,
+        "TTL should be extended close to EXTEND_TO (2_000_000), got {ttl_after_read}"
+    );
+}
+
+#[test]
+fn test_is_verified_extends_ttl() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    client.register_issuer(&issuer, &map![&env]);
+
+    let contract_id = client.address.clone();
+    let key = DataKey::Profile(issuer.clone());
+
+    // Drain TTL below the threshold (100).
+    let ttl_before_drain: u32 =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + ttl_before_drain - 50);
+
+    let ttl_before_read: u32 =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
+    assert!(
+        ttl_before_read < 100,
+        "TTL should be below threshold before read, got {ttl_before_read}"
+    );
+
+    // Call is_verified — this should extend the entry's TTL.
+    assert!(client.is_verified(&issuer));
+
+    let ttl_after_read: u32 =
+        env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
+
+    assert!(
+        ttl_after_read > ttl_before_read,
+        "is_verified should extend TTL: before={ttl_before_read}, after={ttl_after_read}"
+    );
+    assert!(
+        ttl_after_read >= 1_999_000,
+        "TTL should be extended close to EXTEND_TO (2_000_000), got {ttl_after_read}"
+    );
+}
+
+#[test]
+fn test_is_verified_does_not_extend_ttl_for_unknown() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    // Calling is_verified on an unknown address must return false and must
+    // not panic (no TTL extension attempted for a non-existent entry).
+    let unknown = Address::generate(&env);
+    assert!(!client.is_verified(&unknown));
+
+    // Also verify the same function still works for a registered issuer.
+    let issuer = Address::generate(&env);
+    client.register_issuer(&issuer, &map![&env]);
+    assert!(client.is_verified(&issuer));
+}
+
+#[test]
+fn test_get_admin_extends_instance_ttl() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    let contract_id = client.address.clone();
+
+    // Drain instance TTL below the threshold (100).
+    let ttl_before_drain: u32 =
+        env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+    env.ledger()
+        .set_sequence_number(env.ledger().sequence() + ttl_before_drain - 50);
+
+    let ttl_before_read: u32 = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+    assert!(
+        ttl_before_read < 100,
+        "Instance TTL should be below threshold before read, got {ttl_before_read}"
+    );
+
+    // Read the admin — this should extend the instance TTL.
+    assert_eq!(client.get_admin(), admin);
+
+    let ttl_after_read: u32 = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
+
+    assert!(
+        ttl_after_read > ttl_before_read,
+        "get_admin should extend instance TTL: before={ttl_before_read}, after={ttl_after_read}"
+    );
+    assert!(
+        ttl_after_read >= 1_999_000,
+        "Instance TTL should be extended close to EXTEND_TO (2_000_000), got {ttl_after_read}"
     );
 }
