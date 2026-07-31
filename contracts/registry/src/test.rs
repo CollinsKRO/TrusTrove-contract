@@ -931,6 +931,62 @@ fn test_get_verification_status_re_verified_returns_verified() {
     );
 }
 
+// ============== ISSUE #173: TRANSFER ADMIN ==============
+
+#[test]
+fn test_transfer_admin_changes_admin() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.initialize(&admin);
+    client.transfer_admin(&new_admin);
+    assert_eq!(client.get_admin(), new_admin);
+}
+
+#[test]
+#[should_panic]
+fn test_transfer_admin_by_non_admin_panics() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.initialize(&admin);
+    env.set_auths(&[]);
+    client.transfer_admin(&new_admin);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_transfer_admin_before_initialize_panics() {
+    let (env, client) = setup();
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+}
+
+#[test]
+fn test_transfer_admin_emits_event() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.initialize(&admin);
+    client.transfer_admin(&new_admin);
+    assert_eq!(
+        env.events().all(),
+        vec![
+            &env,
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "admin_transferred"), admin.clone()).into_val(&env),
+                new_admin.clone().into_val(&env),
+            ),
+        ]
+    );
+}
+
 // ============== ISSUE #61: TRANSFER OWNERSHIP ==============
 
 #[test]
