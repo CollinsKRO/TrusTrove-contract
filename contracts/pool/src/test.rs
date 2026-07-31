@@ -441,7 +441,8 @@ fn test_fund_invoice_rejects_zero_funded_amount() {
 fn test_fund_invoice_allows_boundary_amount_of_one() {
     let te = setup();
     te.pool.deposit(&te.lp, &100_000_000_000);
-    let invoice_id = create_and_list_with_params(&te, &te.usdc_id, 1, 0);
+    // face_value=2, discount_bps=5000 -> funded_amount = 2 * 5000 / 10000 = 1
+    let invoice_id = create_and_list_with_params(&te, &te.usdc_id, 2, 5000);
 
     let result = te.pool.fund_invoice(&invoice_id);
     assert!(result);
@@ -495,6 +496,53 @@ fn test_fund_invoice_fails_asset_mismatch() {
     te.pool.deposit(&te.lp, &100_000_000_000);
     // Create invoice with XLM asset, but pool handles USDC
     let invoice_id = create_and_list(&te, &te.xlm_id);
+    te.pool.fund_invoice(&invoice_id);
+}
+
+// ============== ISSUE #275: FUND INVOICE EDGE CASES ==============
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_fund_invoice_nonexistent_invoice_panics() {
+    // Calling fund_invoice with a random invoice ID that doesn't exist
+    // should propagate the NotFound (#2) error from the invoice contract's
+    // get_status call.
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+    let fake_id = BytesN::from_array(&te.env, &[0u8; 32]);
+    te.pool.fund_invoice(&fake_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_fund_invoice_unlisted_invoice_panics() {
+    // An invoice in Created state (not yet listed) must be rejected by
+    // fund_invoice with InvoiceNotListed (#8).
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+    let due_date = te.env.ledger().timestamp() + 86400;
+    let invoice_id = te.invoice.create(
+        &te.issuer,
+        &te.buyer,
+        &1_000_000_000,
+        &due_date,
+        &te.usdc_id,
+    );
+    // Do NOT list the invoice — status is Created (0)
+    te.pool.fund_invoice(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_fund_invoice_already_funded_invoice_panics() {
+    // After successfully funding an invoice, a second call to fund_invoice
+    // must be rejected with InvoiceNotListed (#8) since the invoice status
+    // is now Funded (2) rather than Listed (1).
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+    te.pool.fund_invoice(&invoice_id);
+    // Second funding attempt should panic — invoice is no longer Listed
     te.pool.fund_invoice(&invoice_id);
 }
 
@@ -618,6 +666,24 @@ fn test_utilization_rate_after_funding() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #13)")]
+fn test_get_utilization_rate_rejects_overflow() {
+    let te = setup();
+    te.env.as_contract(&te.pool_id, || {
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalDeposits, &u128::MAX);
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalFunded, &(u128::MAX / 10_000 + 1));
+    });
+
+    let _ = te.pool.get_utilization_rate();
+}
+
+#[test]
 fn test_utilization_rate_calculates_correctly() {
     let te = setup();
     te.pool.deposit(&te.lp, &10_000_000_000);
@@ -658,6 +724,28 @@ fn test_updated_max_utilization_reflected_in_stats() {
     te.pool.set_max_utilization(&te.admin, &9000);
     let stats = te.pool.get_stats();
     assert_eq!(stats.max_utilization_bps, 9000);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #13)")]
+fn test_fund_invoice_rejects_utilization_overflow() {
+    let te = setup();
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+    // Set both TotalDeposits and TotalFunded near u128::MAX so that
+    // `available = total_deposits - total_funded` does not underflow,
+    // but `new_total_funded * 10_000` overflows in the utilization check.
+    te.env.as_contract(&te.pool_id, || {
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalDeposits, &u128::MAX);
+        te.env
+            .storage()
+            .instance()
+            .set(&DataKey::TotalFunded, &(u128::MAX / 10_000 + 1));
+    });
+
+    let _ = te.pool.fund_invoice(&invoice_id);
 }
 
 #[test]
