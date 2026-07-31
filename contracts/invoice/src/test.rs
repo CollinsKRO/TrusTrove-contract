@@ -1606,12 +1606,7 @@ fn prop_expiry_window_bounds_are_respected_across_values() {
         .unwrap();
 }
 
-// ============== SUPPORTED ASSET TESTS ==============
-
-#[test]
-fn test_add_supported_asset() {
-    let (env, client, _, _, _, _) = setup();
-    let asset = Address::generate(&env);
+// --------------- Mock Escrow ---------------
 
 /// Minimal mock escrow that records the pool address and implements
 /// `release_to_pool` so `invoice::repay` / `invoice::repay_early` can call
@@ -1660,6 +1655,19 @@ fn mock_escrow_for_pool(env: &Env, pool_id: &Address) -> Address {
     let escrow_id = env.register_contract(None, MockEscrow);
     MockEscrowClient::new(env, &escrow_id).set_pool(pool_id);
     escrow_id
+}
+
+// ============== SUPPORTED ASSET TESTS ==============
+
+#[test]
+fn test_add_supported_asset() {
+    let (env, client, _, _, _, _) = setup();
+    let asset = Address::generate(&env);
+
+    assert!(!client.is_supported_asset(&asset));
+    client.add_supported_asset(&asset);
+    assert!(client.is_supported_asset(&asset));
+    assert_eq!(client.get_supported_asset_count(), 2);
 }
 
 
