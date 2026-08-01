@@ -2,8 +2,8 @@
   <img src="https://trustrove.vercel.app/og-image.png" alt="TrusTrove Contracts" width="600" />
 </p>
 
-<h1 align="center">TrusTrove — Smart Contracts</h1>
 
+<h1 align="center">TrusTrove — Smart Contracts</h1>
 
 
 <p align="center">
