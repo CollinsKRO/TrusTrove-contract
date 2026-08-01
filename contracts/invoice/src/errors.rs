@@ -18,6 +18,7 @@ pub enum InvoiceError {
     ListingNotExpired = 14,
     MathOverflow = 15,
     InvalidAmount = 16,
+    InvalidDiscount = 12,
     CounterOverflow = 17,
     InvalidExpiryWindow = 18,
     InvalidParticipants = 19,

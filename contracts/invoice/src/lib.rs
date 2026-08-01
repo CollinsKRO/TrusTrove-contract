@@ -5,18 +5,15 @@ use soroban_sdk::{
     IntoVal, Map, String, Symbol, Vec,
 };
 
+mod constants;
 mod errors;
 mod events;
 mod test;
 mod types;
 
+pub use constants::*;
 pub use errors::*;
 pub use types::*;
-
-mod storage {
-    pub const TTL_THRESHOLD: u32 = 100;
-    pub const TTL_EXTEND_TO: u32 = 2_000_000;
-}
 
 /// Upper bound on `Invoice::face_value`, in USDC stroops.
 ///
@@ -41,11 +38,9 @@ pub struct InvoiceContract;
 impl InvoiceContract {
     fn save_invoice(env: &Env, inv_key: DataKey, invoice: &Invoice) {
         env.storage().persistent().set(&inv_key, invoice);
-        env.storage().persistent().extend_ttl(
-            &inv_key,
-            storage::TTL_THRESHOLD,
-            storage::TTL_EXTEND_TO,
-        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&inv_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     /// Initializes the invoice contract with admin and registry references.
@@ -358,6 +353,8 @@ impl InvoiceContract {
     /// # Panics
     /// * `InvoiceError::NotFound` if the invoice does not exist.
     /// * `InvoiceError::InvalidStatusTransition` if invoice status is not `Created`.
+    /// * `InvoiceError::InvalidDiscount` if `discount_bps` is zero (a 0% discount is
+    ///   nonsensical — the pool would fund at face value with zero yield).
     /// * `InvoiceError::DiscountTooHigh` if `discount_bps` is greater than 5000.
     ///
     /// # Returns
@@ -377,6 +374,9 @@ impl InvoiceContract {
         invoice.issuer.require_auth();
         if invoice.status != InvoiceStatus::Created {
             panic_with_error!(&env, InvoiceError::InvalidStatusTransition);
+        }
+        if discount_bps == 0 {
+            panic_with_error!(&env, InvoiceError::InvalidDiscount);
         }
         if discount_bps > 5000 {
             panic_with_error!(&env, InvoiceError::DiscountTooHigh);
@@ -1275,7 +1275,9 @@ impl InvoiceContract {
     }
 
     fn extend_instance_ttl(env: &Env) {
-        env.storage().instance().extend_ttl(100, 2_000_000);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 }
 
@@ -1320,10 +1322,10 @@ fn extend_issuer_index(env: &Env, issuer: &Address, invoice_id: &BytesN<32>) {
     env.storage().persistent().set(&count_key, &(count + 1));
     env.storage()
         .persistent()
-        .extend_ttl(&entry_key, 100, 2_000_000);
+        .extend_ttl(&entry_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     env.storage()
         .persistent()
-        .extend_ttl(&count_key, 100, 2_000_000);
+        .extend_ttl(&count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 /// Adds an invoice ID to the buyer's index if not already present.
@@ -1356,10 +1358,10 @@ fn extend_buyer_index(env: &Env, buyer: &Address, invoice_id: &BytesN<32>) {
     env.storage().persistent().set(&count_key, &(count + 1));
     env.storage()
         .persistent()
-        .extend_ttl(&entry_key, 100, 2_000_000);
+        .extend_ttl(&entry_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     env.storage()
         .persistent()
-        .extend_ttl(&count_key, 100, 2_000_000);
+        .extend_ttl(&count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 /// Adds an invoice ID to the status index if not already present.
@@ -1393,10 +1395,10 @@ fn extend_status_index(env: &Env, status: InvoiceStatus, invoice_id: &BytesN<32>
     env.storage().persistent().set(&count_key, &(count + 1));
     env.storage()
         .persistent()
-        .extend_ttl(&entry_key, 100, 2_000_000);
+        .extend_ttl(&entry_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     env.storage()
         .persistent()
-        .extend_ttl(&count_key, 100, 2_000_000);
+        .extend_ttl(&count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 /// Moves an invoice ID from one status index to another, with idempotency for replayed transitions.
