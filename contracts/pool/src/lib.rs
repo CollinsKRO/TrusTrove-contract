@@ -727,6 +727,21 @@ impl PoolContract {
             .instance()
             .set(&DataKey::ActiveInvoiceCount, &new_active_count);
 
+        // Persist the Defaulted status on the invoice contract (step 2 of the
+        // documented cross-contract sequence). This runs after the active-count
+        // underflow check so a mismatched default still surfaces
+        // ActiveCountUnderflow (#17) rather than an invoice lookup error from
+        // mark_defaulted. mark_defaulted is idempotent: when
+        // invoice.trigger_default already transitioned the status to Defaulted
+        // before invoking this pool entry point, the call is a no-op.
+        let mut args = Vec::new(&env);
+        args.push_back(invoice_id.clone().into_val(&env));
+        let _: bool = env.invoke_contract(
+            &invoice_contract,
+            &Symbol::new(&env, "mark_defaulted"),
+            args,
+        );
+
         let total_loss = totals.loss_realised;
         env.storage()
             .instance()
