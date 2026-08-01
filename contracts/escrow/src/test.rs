@@ -425,6 +425,16 @@ fn test_release_to_pool_partial_repayment_succeeds() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_release_to_pool_unknown_invoice_id_panics() {
+    let (env, client, _admin, _pool, _invoice_contract, _usdc_id, _contract_id) = setup();
+    let unknown_id = generate_invoice_id(&env, 999);
+
+    // Never locked this invoice_id — should panic with NotFound (#2)
+    client.release_to_pool(&unknown_id, &1_000_000_000);
+}
+
+#[test]
 fn test_handle_default_returns_funds_to_pool() {
     let (env, client, _admin, pool, _invoice_contract, _usdc_id, _contract_id) = setup();
     let invoice_id = generate_invoice_id(&env, 1);
