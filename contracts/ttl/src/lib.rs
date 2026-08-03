@@ -1,3 +1,5 @@
+#![no_std]
+
 //! Shared TTL (time-to-live) constants for all storage entries across the
 //! TrusTrove contract workspace.
 //!
