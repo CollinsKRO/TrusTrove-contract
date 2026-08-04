@@ -2,16 +2,22 @@
 
 use soroban_sdk::{contract, contractimpl, map, panic_with_error, Address, Env, Map, String, Vec};
 
+mod constants;
 mod errors;
 mod events;
 mod test;
 mod types;
 
+pub use constants::*;
 pub use errors::*;
 pub use types::*;
 
 /// Maximum number of entries allowed in a metadata map.
 const MAX_METADATA_SIZE: u32 = 20;
+/// Maximum length of a single metadata key.
+const MAX_METADATA_KEY_LEN: u32 = 64;
+/// Maximum length of a single metadata value.
+const MAX_METADATA_VALUE_LEN: u32 = 512;
 
 #[contract]
 pub struct RegistryContract;
@@ -67,8 +73,10 @@ impl RegistryContract {
     ///
     /// # Panics
     /// * `RegistryError::NotInitialized` if the contract has not been initialized.
-    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds `MAX_METADATA_SIZE`
-    ///   entries or contains an empty key or value.
+    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds
+    ///   `MAX_METADATA_SIZE` entries, contains an empty key or value, or has a
+    ///   key longer than `MAX_METADATA_KEY_LEN` or a value longer than
+    ///   `MAX_METADATA_VALUE_LEN`.
     /// * `RegistryError::AlreadyRegistered` if a profile is already stored
     ///   for `address`.
     ///
@@ -94,7 +102,9 @@ impl RegistryContract {
         let profile = Profile::new(Role::Issuer, false, env.ledger().timestamp(), metadata);
         let key = DataKey::Profile(address.clone());
         env.storage().persistent().set(&key, &profile);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         events::issuer_registered(&env, &address);
         Self::extend_instance_ttl(&env);
         true
@@ -132,7 +142,9 @@ impl RegistryContract {
             let profile = Profile::new(Role::Issuer, false, env.ledger().timestamp(), map![&env]);
 
             env.storage().persistent().set(&key, &profile);
-            env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
             events::issuer_registered(&env, &address);
             registered += 1;
         }
@@ -162,8 +174,10 @@ impl RegistryContract {
     ///
     /// # Panics
     /// * `RegistryError::NotInitialized` if the contract has not been initialized.
-    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds `MAX_METADATA_SIZE`
-    ///   entries or contains an empty key or value.
+    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds
+    ///   `MAX_METADATA_SIZE` entries, contains an empty key or value, or has a
+    ///   key longer than `MAX_METADATA_KEY_LEN` or a value longer than
+    ///   `MAX_METADATA_VALUE_LEN`.
     /// * `RegistryError::AlreadyRegistered` if a profile is already stored
     ///   for `address`.
     ///
@@ -189,7 +203,9 @@ impl RegistryContract {
         let profile = Profile::new(Role::Buyer, false, env.ledger().timestamp(), metadata);
         let key = DataKey::Profile(address.clone());
         env.storage().persistent().set(&key, &profile);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         events::buyer_registered(&env, &address);
         Self::extend_instance_ttl(&env);
         true
@@ -212,7 +228,9 @@ impl RegistryContract {
     ///
     /// # Panics
     /// * `RegistryError::InvalidMetadata` if `metadata` exceeds
-    ///   `MAX_METADATA_SIZE` entries or contains an empty key or value.
+    ///   `MAX_METADATA_SIZE` entries, contains an empty key or value, or has a
+    ///   key longer than `MAX_METADATA_KEY_LEN` or a value longer than
+    ///   `MAX_METADATA_VALUE_LEN`.
     /// * `RegistryError::NotRegistered` if no profile exists for `address`.
     ///
     /// # Returns
@@ -233,7 +251,9 @@ impl RegistryContract {
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotRegistered));
         profile.metadata = metadata;
         env.storage().persistent().set(&key, &profile);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         events::profile_updated(&env, &address);
         true
     }
@@ -249,8 +269,10 @@ impl RegistryContract {
     /// * `bool` - `true` when metadata is updated successfully.
     ///
     /// # Panics
-    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds `MAX_METADATA_SIZE`
-    ///   entries or contains an empty key or value.
+    /// * `RegistryError::InvalidMetadata` if `metadata` exceeds
+    ///   `MAX_METADATA_SIZE` entries, contains an empty key or value, or has a
+    ///   key longer than `MAX_METADATA_KEY_LEN` or a value longer than
+    ///   `MAX_METADATA_VALUE_LEN`.
     /// * `RegistryError::NotFound` if the address is not registered.
     ///
     /// # Example
@@ -268,7 +290,9 @@ impl RegistryContract {
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
         profile.metadata = metadata;
         env.storage().persistent().set(&key, &profile);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         events::metadata_updated(&env, &address);
         true
     }
@@ -303,7 +327,9 @@ impl RegistryContract {
             .persistent()
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         profile
     }
 
@@ -337,7 +363,9 @@ impl RegistryContract {
         match env.storage().persistent().get::<_, Profile>(&key) {
             Some(profile) => {
                 let verified = profile.verified();
-                env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
                 verified
             }
             None => false,
@@ -400,7 +428,9 @@ impl RegistryContract {
         profile.set_verified(false);
         profile.set_revoked(true);
         env.storage().persistent().set(&key, &profile);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         events::address_revoked(&env, &address);
         Self::extend_instance_ttl(&env);
         true
@@ -450,7 +480,9 @@ impl RegistryContract {
         profile.set_verified(true);
         profile.set_revoked(false);
         env.storage().persistent().set(&key, &profile);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         events::address_reinstated(&env, &address);
         Self::extend_instance_ttl(&env);
         true
@@ -476,7 +508,9 @@ impl RegistryContract {
             profile.set_revoked(true);
         }
         env.storage().persistent().set(&key, &profile);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         events::profile_verified(&env, &address, verify);
         Self::extend_instance_ttl(&env);
         true
@@ -511,6 +545,45 @@ impl RegistryContract {
         Self::extend_instance_ttl(&env);
     }
 
+    /// Transfers contract admin to a new address.
+    ///
+    /// Unlike `transfer_ownership`, this function only requires auth from the
+    /// current admin — the new admin does not need to sign. This is useful
+    /// for key rotation scenarios where the current admin key may be
+    /// compromised or needs to be rotated without the new key holder's
+    /// involvement.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `new_admin` - The address that will become the new contract admin.
+    ///
+    /// # Auth
+    /// * Requires `current_admin.require_auth()` — only the current stored
+    ///   contract admin may call this function.
+    ///
+    /// # Panics
+    /// * `RegistryError::NotFound` if the contract has not been initialized
+    ///   (no admin is stored under `DataKey::Admin`).
+    ///
+    /// # Returns
+    /// * `()` - No value is returned.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.transfer_admin(&new_admin);
+    /// ```
+    pub fn transfer_admin(env: Env, new_admin: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &new_admin);
+        events::admin_transferred(&env, &admin, &new_admin);
+        Self::extend_instance_ttl(&env);
+    }
+
     /// Returns the stored contract admin address.
     ///
     /// Reads the admin entry from instance storage, extends its TTL using
@@ -540,7 +613,9 @@ impl RegistryContract {
             .instance()
             .get(&DataKey::Admin)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotInitialized));
-        env.storage().instance().extend_ttl(100, 2_000_000);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         admin
     }
 }
@@ -553,21 +628,21 @@ impl RegistryContract {
     }
 
     fn extend_instance_ttl(env: &Env) {
-        env.storage().instance().extend_ttl(100, 2_000_000);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     fn validate_metadata(env: &Env, metadata: &Map<String, String>) {
         if metadata.len() > MAX_METADATA_SIZE {
             panic_with_error!(env, RegistryError::InvalidMetadata);
         }
-        for key in metadata.keys().iter() {
-            if key.is_empty() {
+        for (key, value) in metadata.iter() {
+            if key.is_empty() || value.is_empty() {
                 panic_with_error!(env, RegistryError::InvalidMetadata);
             }
-            if let Some(value) = metadata.get(key) {
-                if value.is_empty() {
-                    panic_with_error!(env, RegistryError::InvalidMetadata);
-                }
+            if key.len() > MAX_METADATA_KEY_LEN || value.len() > MAX_METADATA_VALUE_LEN {
+                panic_with_error!(env, RegistryError::InvalidMetadata);
             }
         }
     }
