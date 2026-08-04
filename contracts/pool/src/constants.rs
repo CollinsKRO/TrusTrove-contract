@@ -1,14 +1,9 @@
-//! Shared TTL constants for persistent and instance storage.
+//! Shared TTL constants re-exported from the workspace-level `trusttrove-ttl`
+//! crate so the bump policy stays consistent across all contracts.
 //!
-//! These values are passed to `Storage::extend_ttl` (and the instance
-//! equivalent) to keep entries alive across contract invocations.
 //! `TTL_THRESHOLD` is the minimum number of ledgers an entry must have
-//! remaining before it is extended, and `TTL_EXTEND_TO` is the number of
-//! ledgers the entry is extended to.
+//! remaining before it is extended (25% of `TTL_EXTEND_TO`), and
+//! `TTL_EXTEND_TO` is the number of ledgers the entry is extended to.
 
-/// Minimum remaining ledgers before a storage entry is eligible for TTL
-/// extension.
-pub const TTL_THRESHOLD: u32 = 100;
-
-/// Number of ledgers a storage entry is extended to when refreshed.
-pub const TTL_EXTEND_TO: u32 = 2_000_000;
+pub use trusttrove_ttl::EXTEND_TO as TTL_EXTEND_TO;
+pub use trusttrove_ttl::THRESHOLD as TTL_THRESHOLD;

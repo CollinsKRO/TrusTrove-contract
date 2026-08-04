@@ -251,7 +251,9 @@ impl RegistryContract {
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotRegistered));
         profile.metadata = metadata;
         env.storage().persistent().set(&key, &profile);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         events::profile_updated(&env, &address);
         true
     }
@@ -325,7 +327,9 @@ impl RegistryContract {
             .persistent()
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotFound));
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         profile
     }
 
@@ -359,7 +363,9 @@ impl RegistryContract {
         match env.storage().persistent().get::<_, Profile>(&key) {
             Some(profile) => {
                 let verified = profile.verified();
-                env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+                env.storage()
+                    .persistent()
+                    .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
                 verified
             }
             None => false,
@@ -474,7 +480,9 @@ impl RegistryContract {
         profile.set_verified(true);
         profile.set_revoked(false);
         env.storage().persistent().set(&key, &profile);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         events::address_reinstated(&env, &address);
         Self::extend_instance_ttl(&env);
         true
@@ -605,7 +613,9 @@ impl RegistryContract {
             .instance()
             .get(&DataKey::Admin)
             .unwrap_or_else(|| panic_with_error!(&env, RegistryError::NotInitialized));
-        env.storage().instance().extend_ttl(100, 2_000_000);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
         admin
     }
 }
