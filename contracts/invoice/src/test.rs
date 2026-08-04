@@ -668,6 +668,8 @@ fn test_trigger_default_from_repaid_rejected() {
 
     let pool_id = mock_pool_with_asset(&env, &usdc);
     client.set_pool_contract(&pool_id);
+    let escrow = mock_escrow_for_pool(&env, &pool_id, &usdc);
+    client.set_escrow_contract(&escrow);
     client.mark_funded(&invoice_id, &pool_id, &usdc, &980_000_000);
     client.mark_shipped(&invoice_id);
     client.confirm_delivery(&invoice_id, &issuer);
@@ -1353,6 +1355,8 @@ fn test_repay_from_funded_succeeds() {
 
     let pool = mock_pool_with_asset(&env, &usdc);
     client.set_pool_contract(&pool);
+    let escrow = mock_escrow_for_pool(&env, &pool, &usdc);
+    client.set_escrow_contract(&escrow);
     client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
     assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Funded);
 
@@ -1375,6 +1379,8 @@ fn test_repay_from_active_succeeds() {
 
     let pool = mock_pool_with_asset(&env, &usdc);
     client.set_pool_contract(&pool);
+    let escrow = mock_escrow_for_pool(&env, &pool, &usdc);
+    client.set_escrow_contract(&escrow);
     client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
     client.mark_shipped(&invoice_id);
     assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Active);
@@ -1398,6 +1404,8 @@ fn test_repay_from_confirmed_succeeds() {
 
     let pool = mock_pool_with_asset(&env, &usdc);
     client.set_pool_contract(&pool);
+    let escrow = mock_escrow_for_pool(&env, &pool, &usdc);
+    client.set_escrow_contract(&escrow);
     client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
     client.mark_shipped(&invoice_id);
     client.confirm_delivery(&invoice_id, &issuer);
@@ -1423,6 +1431,8 @@ fn test_repay_emits_event() {
 
     let pool = mock_pool_with_asset(&env, &usdc);
     client.set_pool_contract(&pool);
+    let escrow = mock_escrow_for_pool(&env, &pool, &usdc);
+    client.set_escrow_contract(&escrow);
     client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
 
     mint_tokens(&env, &usdc, &buyer, face_value as i128);
@@ -1677,29 +1687,29 @@ impl MockEscrow {
             .set(&Symbol::new(&env, "pool"), &pool);
     }
 
-    /// Minimal stub: in the mock token world, `release_to_pool` just transfers
-    /// the repayment amount from escrow back to pool (mirrors real escrow logic
-    /// but without the lock-record validation that the real escrow enforces).
+    /// Stores the USDC asset address.
+    pub fn set_asset(env: Env, asset: Address) {
+        env.storage()
+            .instance()
+            .set(&Symbol::new(&env, "asset"), &asset);
+    }
+
+    /// Minimal stub: transfers `amount` from escrow to pool.
+    /// No pool auth required — mirrors the real escrow's updated behavior
+    /// where the invoice contract (not the pool) is the caller.
     pub fn release_to_pool(env: Env, _invoice_id: BytesN<32>, amount: u128) -> bool {
-        // Require pool auth (mirrors the real escrow's require_pool_auth).
         let pool: Address = env
             .storage()
             .instance()
             .get(&Symbol::new(&env, "pool"))
             .unwrap();
-        pool.require_auth();
+        let asset: Address = env
+            .storage()
+            .instance()
+            .get(&Symbol::new(&env, "asset"))
+            .unwrap();
 
-        // Forward the held token from escrow -> pool so token balances in tests
-        // reflect the repayment flow. We ask the pool for its USDC asset via a
-        // helper `get_usdc_asset()` that MockPool exposes in tests, then use the
-        // token client to transfer `amount` from this contract (escrow) to pool.
-        let asset: Address =
-            env.invoke_contract(&pool, &Symbol::new(&env, "get_usdc_asset"), Vec::new(&env));
-
-        // Current contract address acts as escrow address
         let escrow_addr = env.current_contract_address();
-
-        // Transfer amount from escrow -> pool using the token client.
         let token_client = token::Client::new(&env, &asset);
         token_client.transfer(&escrow_addr, &pool, &(amount as i128));
 
@@ -1707,10 +1717,12 @@ impl MockEscrow {
     }
 }
 
-/// Registers a MockEscrow wired to `pool_id` and returns its address.
-fn mock_escrow_for_pool(env: &Env, pool_id: &Address) -> Address {
+/// Registers a MockEscrow wired to `pool_id` and `asset` and returns its address.
+fn mock_escrow_for_pool(env: &Env, pool_id: &Address, asset: &Address) -> Address {
     let escrow_id = env.register_contract(None, MockEscrow);
-    MockEscrowClient::new(env, &escrow_id).set_pool(pool_id);
+    let esc_client = MockEscrowClient::new(env, &escrow_id);
+    esc_client.set_pool(pool_id);
+    esc_client.set_asset(asset);
     escrow_id
 }
 
@@ -1727,7 +1739,6 @@ fn test_add_supported_asset() {
     assert_eq!(client.get_supported_asset_count(), 2);
 }
 
-
 // ============================== REPAY TESTS ==============================
 
 #[test]
@@ -1739,6 +1750,8 @@ fn test_repay_from_confirmed() {
 
     let pool = mock_pool_with_asset(&env, &usdc);
     client.set_pool_contract(&pool);
+    let escrow = mock_escrow_for_pool(&env, &pool, &usdc);
+    client.set_escrow_contract(&escrow);
     client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
     client.mark_shipped(&invoice_id);
     client.confirm_delivery(&invoice_id, &issuer);
@@ -1806,6 +1819,8 @@ fn test_repay_from_repaid_rejected() {
     client.list_for_financing(&invoice_id, &200);
     let pool = mock_pool_with_asset(&env, &usdc);
     client.set_pool_contract(&pool);
+    let escrow = mock_escrow_for_pool(&env, &pool, &usdc);
+    client.set_escrow_contract(&escrow);
     client.mark_funded(&invoice_id, &pool, &usdc, &980_000_000);
     client.mark_shipped(&invoice_id);
     client.confirm_delivery(&invoice_id, &issuer);

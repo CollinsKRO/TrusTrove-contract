@@ -387,8 +387,6 @@ fn test_release_to_pool_transfers_correct_amount() {
 // Handle Default Tests
 // ============================================================================
 
-
-
 #[test]
 #[should_panic(expected = "Error(Contract, #5)")]
 fn test_release_to_pool_fails_zero_repayment() {
@@ -769,7 +767,6 @@ fn test_release_to_issuer_requires_pool_authorization() {
     env.set_auths(&[]);
     client.release_to_issuer(&invoice_id, &issuer);
 }
-
 
 #[test]
 #[should_panic]

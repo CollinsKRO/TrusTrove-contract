@@ -218,7 +218,6 @@ impl EscrowContract {
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, EscrowError::NotFound));
 
-
         let usdc = Self::usdc_client(&env);
         usdc.transfer(
             &env.current_contract_address(),
