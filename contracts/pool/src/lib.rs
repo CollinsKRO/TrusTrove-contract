@@ -4,16 +4,21 @@ use soroban_sdk::{
     contract, contractimpl, panic_with_error, token, Address, BytesN, Env, IntoVal, Symbol, Vec,
 };
 
+mod constants;
 mod errors;
 mod events;
 mod test;
-mod ttl;
 mod types;
+
+pub use constants::*;
 
 pub use errors::*;
 pub use types::*;
 
-use ttl::{EXTEND_TO, THRESHOLD};
+/// Minimum initial deposit floor (1 USDC = 10_000_000 stroops).
+/// Prevents share-price griefing by requiring the initial deposit in an empty pool
+/// to be at least this floor.
+pub const MIN_INITIAL_DEPOSIT: u128 = 10_000_000;
 
 #[contract]
 pub struct PoolContract;
@@ -138,7 +143,7 @@ impl PoolContract {
     /// Requires self-authorization from `lp` (via `lp.require_auth()`).
     ///
     /// # Panics
-    /// * `InvalidAmount` if `usdc_amount` is zero.
+    /// * `InvalidAmount` if `usdc_amount` is zero or if initial deposit is below `MIN_INITIAL_DEPOSIT`.
     /// * `MinimumDeposit` if the deposit is too small to mint at least 1 share
     ///   at the current share price (prevents 0-share dust deposits).
     ///
@@ -147,7 +152,7 @@ impl PoolContract {
     ///
     /// # Example
     /// ```ignore
-    /// let shares = client.deposit(&lp, 1_000);
+    /// let shares = client.deposit(&lp, 10_000_000);
     /// ```
     pub fn deposit(env: Env, lp: Address, usdc_amount: u128) -> u128 {
         if !env.storage().instance().has(&DataKey::Admin) {
@@ -161,6 +166,10 @@ impl PoolContract {
         let totals = Self::totals(&env);
         let total_shares = totals.shares;
         let total_deposits = totals.deposits;
+
+        if (total_shares == 0 || total_deposits == 0) && usdc_amount < MIN_INITIAL_DEPOSIT {
+            panic_with_error!(&env, PoolError::InvalidAmount);
+        }
 
         let shares_to_issue = if total_shares == 0 || total_deposits == 0 {
             usdc_amount
@@ -197,7 +206,7 @@ impl PoolContract {
             .set(&lp_shares_key, &(lp_shares + shares_to_issue));
         env.storage()
             .persistent()
-            .extend_ttl(&lp_shares_key, THRESHOLD, EXTEND_TO);
+            .extend_ttl(&lp_shares_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         let lp_deposit_count_key = DataKey::LPDepositCount(lp.clone());
         let count: u32 = env
@@ -210,7 +219,7 @@ impl PoolContract {
             .set(&lp_deposit_count_key, &(count + 1));
         env.storage()
             .persistent()
-            .extend_ttl(&lp_deposit_count_key, THRESHOLD, EXTEND_TO);
+            .extend_ttl(&lp_deposit_count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         let lp_init_key = DataKey::LPInitialDeposit(lp.clone());
         let init_dep: u128 = env.storage().persistent().get(&lp_init_key).unwrap_or(0);
@@ -219,7 +228,7 @@ impl PoolContract {
             .set(&lp_init_key, &(init_dep + usdc_amount));
         env.storage()
             .persistent()
-            .extend_ttl(&lp_init_key, THRESHOLD, EXTEND_TO);
+            .extend_ttl(&lp_init_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         events::lp_deposited(&env, &lp, usdc_amount, shares_to_issue);
         Self::extend_instance_ttl(&env);
@@ -241,6 +250,12 @@ impl PoolContract {
     /// * `NoShares` if the LP has no shares.
     /// * `InsufficientShares` if the LP does not own enough shares.
     /// * `InsufficientLiquidity` if the pool lacks enough available USDC.
+    ///
+    /// # Notes
+    /// On full withdrawal (remaining shares reach zero), `LPInitialDeposit`
+    /// and `LPDepositCount` are removed from storage. This ensures a
+    /// subsequent re-deposit starts with a fresh initial-deposit basis
+    /// and an accurate deposit count.
     ///
     /// # Returns
     /// * `u128` - The amount of USDC returned.
@@ -294,12 +309,21 @@ impl PoolContract {
             .instance()
             .set(&DataKey::TotalDeposits, &(total_deposits - usdc_to_return));
 
+        let remaining_shares = lp_shares - shares;
         env.storage()
             .persistent()
-            .set(&lp_shares_key, &(lp_shares - shares));
+            .set(&lp_shares_key, &remaining_shares);
         env.storage()
             .persistent()
-            .extend_ttl(&lp_shares_key, THRESHOLD, EXTEND_TO);
+            .extend_ttl(&lp_shares_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+
+        if remaining_shares == 0 {
+            // Full withdrawal: reset LP-scoped storage to prevent stale state
+            // on re-deposit. LPInitialDeposit is zeroed below via the
+            // principal_portion calculation; LPDepositCount must be removed too.
+            let dep_count_key = DataKey::LPDepositCount(lp.clone());
+            env.storage().persistent().remove(&dep_count_key);
+        }
 
         let init_dep_key = DataKey::LPInitialDeposit(lp.clone());
         let init_dep: u128 = env.storage().persistent().get(&init_dep_key).unwrap_or(0);
@@ -311,7 +335,7 @@ impl PoolContract {
             env.storage().persistent().set(&init_dep_key, &new_init_dep);
             env.storage()
                 .persistent()
-                .extend_ttl(&init_dep_key, THRESHOLD, EXTEND_TO);
+                .extend_ttl(&init_dep_key, TTL_THRESHOLD, TTL_EXTEND_TO);
         } else {
             env.storage().persistent().remove(&init_dep_key);
         }
@@ -323,7 +347,7 @@ impl PoolContract {
             .set(&yield_key, &(prev_yield + yield_earned));
         env.storage()
             .persistent()
-            .extend_ttl(&yield_key, THRESHOLD, EXTEND_TO);
+            .extend_ttl(&yield_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         events::lp_withdrawn(&env, &lp, usdc_to_return, shares);
         Self::extend_instance_ttl(&env);
@@ -354,6 +378,7 @@ impl PoolContract {
     /// * `InvalidAmount` if the computed funded amount is zero.
     /// * `InsufficientLiquidity` if the pool does not have enough funds.
     /// * `UtilizationCapExceeded` if funding would push utilization above the cap.
+    /// * `Overflow` if the resulting utilization calculation overflows `u128`.
     ///
     /// # Returns
     /// * `bool` - `true` when the invoice is funded.
@@ -420,9 +445,8 @@ impl PoolContract {
 
         let max_utilization_bps = totals.max_utilization_bps;
         let new_total_funded = total_funded + funded_amount;
-        let utilization_after = (new_total_funded * 10000)
-            .checked_div(total_deposits)
-            .unwrap_or(0) as u32;
+        let utilization_after =
+            Self::utilization_bps_or_panic(&env, new_total_funded, total_deposits);
         if utilization_after > max_utilization_bps {
             panic_with_error!(&env, PoolError::UtilizationCapExceeded);
         }
@@ -454,7 +478,7 @@ impl PoolContract {
         env.storage().persistent().set(&funded_key, &funded_amount);
         env.storage()
             .persistent()
-            .extend_ttl(&funded_key, THRESHOLD, EXTEND_TO);
+            .extend_ttl(&funded_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         events::invoice_funded(&env, &invoice_id, funded_amount);
         Self::extend_instance_ttl(&env);
@@ -627,7 +651,18 @@ impl PoolContract {
         true
     }
 
-    /// Forwards a defaulted invoice to escrow default handling.
+    /// Forwards a defaulted invoice to escrow default handling and updates
+    /// the invoice status on the invoice contract.
+    ///
+    /// This function performs the following cross-contract sequence:
+    /// 1. Calls `escrow.handle_default()` to release escrowed funds back
+    ///    to the pool.
+    /// 2. Calls `invoice.mark_defaulted()` to persist the `Defaulted` status
+    ///    on the invoice record, update the status index, and emit the
+    ///    `invoice_defaulted` event.
+    /// 3. Updates the pool's local accounting (TotalFunded, TotalDeposits,
+    ///    TotalLossRealised, ActiveInvoiceCount) and removes the funded
+    ///    invoice entry.
     ///
     /// # Arguments
     /// * `env` - The Soroban environment.
@@ -639,11 +674,12 @@ impl PoolContract {
     /// invoke this entry point.
     ///
     /// # Panics
+    /// * `InvoiceNotFound` if no funded invoice entry exists for `invoice_id`.
     /// * `ActiveCountUnderflow` if the active-invoice counter would underflow
     ///   (e.g. double-default of the same invoice).
     ///
     /// # Returns
-    /// * `bool` - `true` when default handling completes, `false` if invoice is not funded.
+    /// * `bool` - `true` when default handling completes.
     ///
     /// # Example
     /// ```ignore
@@ -655,7 +691,7 @@ impl PoolContract {
 
         let funded_key = DataKey::FundedInvoice(invoice_id.clone());
         if !env.storage().persistent().has(&funded_key) {
-            return false;
+            panic_with_error!(&env, PoolError::InvoiceNotFound);
         }
         let funded_amount: u128 = env.storage().persistent().get(&funded_key).unwrap();
 
@@ -690,6 +726,21 @@ impl PoolContract {
         env.storage()
             .instance()
             .set(&DataKey::ActiveInvoiceCount, &new_active_count);
+
+        // Persist the Defaulted status on the invoice contract (step 2 of the
+        // documented cross-contract sequence). This runs after the active-count
+        // underflow check so a mismatched default still surfaces
+        // ActiveCountUnderflow (#17) rather than an invoice lookup error from
+        // mark_defaulted. mark_defaulted is idempotent: when
+        // invoice.trigger_default already transitioned the status to Defaulted
+        // before invoking this pool entry point, the call is a no-op.
+        let mut args = Vec::new(&env);
+        args.push_back(invoice_id.clone().into_val(&env));
+        let _: bool = env.invoke_contract(
+            &invoice_contract,
+            &Symbol::new(&env, "mark_defaulted"),
+            args,
+        );
 
         let total_loss = totals.loss_realised;
         env.storage()
@@ -809,10 +860,11 @@ impl PoolContract {
     /// No authorization is required.
     ///
     /// # Panics
-    /// This function does not panic; returns `0` when `total_deposits` is zero.
+    /// * `Overflow` if scaling `total_funded` into basis points would overflow.
     ///
     /// # Returns
-    /// * `u32` - The utilization rate in basis points (`total_funded * 10_000 / total_deposits`).
+    /// * `u32` - The utilization rate in basis points, or `0` when
+    ///   `total_deposits` is zero.
     ///
     /// # Example
     /// ```ignore
@@ -820,12 +872,7 @@ impl PoolContract {
     /// ```
     pub fn get_utilization_rate(env: Env) -> u32 {
         let totals = Self::totals(&env);
-        let total_deposits = totals.deposits;
-        let total_funded = totals.funded;
-        if total_deposits == 0 {
-            return 0;
-        }
-        (total_funded * 10000 / total_deposits) as u32
+        Self::utilization_bps_or_panic(&env, totals.funded, totals.deposits)
     }
 
     pub fn set_max_utilization(env: Env, admin: Address, new_cap_bps: u32) -> bool {
@@ -918,6 +965,8 @@ impl PoolContract {
     }
 
     fn extend_instance_ttl(env: &Env) {
-        env.storage().instance().extend_ttl(THRESHOLD, EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 }

@@ -2,11 +2,13 @@
 
 use soroban_sdk::{contract, contractimpl, panic_with_error, token, Address, BytesN, Env, Vec};
 
+mod constants;
 mod errors;
 mod events;
 mod test;
 mod types;
 
+pub use constants::*;
 pub use errors::*;
 pub use types::*;
 
@@ -23,7 +25,6 @@ impl EscrowContract {
     /// * `env` - The Soroban environment.
     /// * `admin` - The admin address for this contract.
     /// * `pool_contract` - The pool contract address.
-    /// * `invoice_contract` - The invoice contract address.
     /// * `usdc_asset` - The USDC asset address.
     ///
     /// # Auth
@@ -37,21 +38,9 @@ impl EscrowContract {
     ///
     /// # Example
     /// ```ignore
-    /// client.initialize(&admin, &pool, &invoice, &usdc);
+    /// client.initialize(&admin, &pool, &usdc);
     /// ```
-    /// Get a token client for the USDC asset stored in the contract.
-    fn usdc_client(env: &Env) -> token::Client {
-        let usdc_id: Address = env.storage().instance().get(&DataKey::UsdcAsset).unwrap();
-        token::Client::new(env, &usdc_id)
-    }
-
-    pub fn initialize(
-        env: Env,
-        admin: Address,
-        pool_contract: Address,
-        invoice_contract: Address,
-        usdc_asset: Address,
-    ) {
+    pub fn initialize(env: Env, admin: Address, pool_contract: Address, usdc_asset: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic_with_error!(&env, EscrowError::AlreadyInitialized);
         }
@@ -62,11 +51,14 @@ impl EscrowContract {
             .set(&DataKey::PoolContract, &pool_contract);
         env.storage()
             .instance()
-            .set(&DataKey::InvoiceContract, &invoice_contract);
-        env.storage()
-            .instance()
             .set(&DataKey::UsdcAsset, &usdc_asset);
         Self::extend_instance_ttl(&env);
+    }
+
+    /// Get a token client for the USDC asset stored in the contract.
+    fn usdc_client(env: &Env) -> token::Client {
+        let usdc_id: Address = env.storage().instance().get(&DataKey::UsdcAsset).unwrap();
+        token::Client::new(env, &usdc_id)
     }
 
     /// Locks USDC in escrow against a funded invoice.
@@ -112,7 +104,9 @@ impl EscrowContract {
             locked_at: env.ledger().timestamp(),
         };
         env.storage().persistent().set(&key, &record);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::append_history(&env, &invoice_id, EscrowAction::Locked, amount);
         Self::extend_instance_ttl(&env);
         events::funds_locked(&env, &invoice_id, amount);
@@ -147,16 +141,6 @@ impl EscrowContract {
 
         if issuer == env.current_contract_address() || issuer == pool {
             panic_with_error!(&env, EscrowError::InvalidRecipient);
-        }
-
-        if let Some(invoice_contract) = env
-            .storage()
-            .instance()
-            .get::<_, Address>(&DataKey::InvoiceContract)
-        {
-            if issuer == invoice_contract {
-                panic_with_error!(&env, EscrowError::InvalidRecipient);
-            }
         }
 
         let key = DataKey::Locked(invoice_id.clone());
@@ -388,11 +372,15 @@ impl EscrowContract {
             timestamp: env.ledger().timestamp(),
         });
         env.storage().persistent().set(&key, &history);
-        env.storage().persistent().extend_ttl(&key, 100, 2_000_000);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     fn extend_instance_ttl(env: &Env) {
-        env.storage().instance().extend_ttl(100, 2_000_000);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     fn require_pool_auth(env: &Env) -> Address {

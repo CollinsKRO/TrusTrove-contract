@@ -1509,6 +1509,7 @@ name = "trusttrove-escrow"
 version = "0.1.0"
 dependencies = [
  "soroban-sdk",
+ "trusttrove-ttl",
 ]
 
 [[package]]
@@ -1520,6 +1521,7 @@ dependencies = [
  "trusttrove-escrow",
  "trusttrove-pool",
  "trusttrove-registry",
+ "trusttrove-ttl",
 ]
 
 [[package]]
@@ -1529,6 +1531,7 @@ dependencies = [
  "soroban-sdk",
  "trusttrove-escrow",
  "trusttrove-invoice",
+ "trusttrove-ttl",
 ]
 
 [[package]]
@@ -1537,7 +1540,12 @@ version = "0.1.0"
 dependencies = [
  "proptest",
  "soroban-sdk",
+ "trusttrove-ttl",
 ]
+
+[[package]]
+name = "trusttrove-ttl"
+version = "0.1.0"
 
 [[package]]
 name = "typenum"

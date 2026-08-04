@@ -8,7 +8,7 @@ use soroban_sdk::{
     Address, BytesN, Env, IntoVal, Symbol, TryFromVal,
 };
 
-use crate::{InvoiceContract, InvoiceContractClient, InvoiceStatus};
+use crate::{InvoiceContract, InvoiceContractClient, InvoiceStatus, TTL_EXTEND_TO, TTL_THRESHOLD};
 
 #[contract]
 pub struct MockRegistry;
@@ -28,7 +28,7 @@ impl MockRegistry {
             .set(&DataKey(address.clone()), &true);
         env.storage()
             .persistent()
-            .extend_ttl(&DataKey(address), 100, 2_000_000);
+            .extend_ttl(&DataKey(address), TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 }
 
@@ -211,6 +211,60 @@ fn test_create_invoice_with_verified_parties() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #4)")]
+fn test_create_fails_unverified_issuer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let registry_id = env.register_contract(None, MockRegistry);
+    let registry_client = MockRegistryClient::new(&env, &registry_id);
+
+    let issuer = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    registry_client.register(&buyer);
+
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &registry_id);
+
+    let usdc_asset = env.register_contract(None, MockToken);
+    client.add_supported_asset(&usdc_asset);
+
+    let face_value: u128 = 1_000_000_000;
+    let due_date = env.ledger().timestamp() + 86400;
+    client.create(&issuer, &buyer, &face_value, &due_date, &usdc_asset);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_create_fails_unverified_buyer() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let registry_id = env.register_contract(None, MockRegistry);
+    let registry_client = MockRegistryClient::new(&env, &registry_id);
+
+    let issuer = Address::generate(&env);
+    let buyer = Address::generate(&env);
+    registry_client.register(&issuer);
+
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &registry_id);
+
+    let usdc_asset = env.register_contract(None, MockToken);
+    client.add_supported_asset(&usdc_asset);
+
+    let face_value: u128 = 1_000_000_000;
+    let due_date = env.ledger().timestamp() + 86400;
+    client.create(&issuer, &buyer, &face_value, &due_date, &usdc_asset);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #6)")]
 fn test_create_fails_zero_face_value() {
     let (env, client, issuer, buyer, _, usdc) = setup();
@@ -307,19 +361,29 @@ fn test_list_fails_discount_too_high() {
 }
 
 #[test]
-fn test_list_for_financing_discount_bps_zero_boundary() {
-    // discount_bps == 0 is currently accepted; see issue #79 for a
-    // companion validation that would turn this into a panic test.
+#[should_panic(expected = "Error(Contract, #12)")]
+fn test_list_for_financing_discount_bps_zero_panics() {
+    // discount_bps == 0 is a 0% yield — nonsensical business state.
+    // Must be rejected with InvalidDiscount (#12).
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &0);
+}
+
+#[test]
+fn test_list_for_financing_discount_bps_min_boundary() {
+    // discount_bps == 1 is the smallest valid value and must succeed.
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
 
-    let result = client.list_for_financing(&invoice_id, &0);
+    let result = client.list_for_financing(&invoice_id, &1);
     assert!(result);
 
     let invoice = client.get(&invoice_id);
     assert_eq!(invoice.status, InvoiceStatus::Listed);
-    assert_eq!(invoice.discount_bps, 0);
+    assert_eq!(invoice.discount_bps, 1);
 
     let contract_id = client.address.clone();
     let events = env.events().all();
@@ -329,7 +393,7 @@ fn test_list_for_financing_discount_bps_zero_boundary() {
         topics,
         (Symbol::new(&env, "invoice_listed"), invoice_id.clone()).into_val(&env)
     );
-    assert_eq!(u32::try_from_val(&env, &data).unwrap(), 0u32);
+    assert_eq!(u32::try_from_val(&env, &data).unwrap(), 1u32);
 }
 
 #[test]
@@ -1539,7 +1603,7 @@ fn prop_any_future_due_date_creates_invoice_successfully() {
 fn prop_discount_bps_within_limit_always_lists_invoice() {
     let mut runner = TestRunner::new(ProptestConfig::with_cases(10));
     runner
-        .run(&(0u32..=5000u32), |discount_bps| {
+        .run(&(1u32..=5000u32), |discount_bps| {
             let (env, client, issuer, buyer, _, usdc) = setup();
             let due_date = env.ledger().timestamp() + 86400;
             let id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
@@ -2010,4 +2074,357 @@ fn test_create_fails_missing_counter() {
 
     let due_date = env.ledger().timestamp() + 86400;
     client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #19)")]
+fn test_create_fails_self_invoicing() {
+    let (env, client, issuer, _buyer, _registry, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    client.create(&issuer, &issuer, &1_000_000_000, &due_date, &usdc);
+}
+
+// ============== ISSUE #218: create writes to InvoicesByIssuer and InvoicesByBuyer indexes ==============
+
+#[test]
+fn test_create_writes_to_issuer_index() {
+    // Verifies that `create` stores the invoice ID in the issuer's index,
+    // both via a direct storage read and the public `get_by_issuer` query.
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let face_value: u128 = 1_000_000_000;
+    let due_date = env.ledger().timestamp() + 86400;
+
+    let invoice_id = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+
+    // Direct storage read: issuer index count and entry
+    env.as_contract(&client.address, || {
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::IssuerIndexCount(issuer.clone()))
+            .unwrap_or(0);
+        assert_eq!(count, 1);
+
+        let stored_id: BytesN<32> = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::IssuerIndexEntry(issuer.clone(), 0))
+            .unwrap();
+        assert_eq!(stored_id, invoice_id);
+    });
+
+    // Public API: get_by_issuer returns the invoice
+    let invoices = client.get_by_issuer(&issuer);
+    assert_eq!(invoices.len(), 1);
+    assert_eq!(invoices.get(0).unwrap().id, invoice_id);
+
+    // A different (unused) issuer address returns no invoices
+    let other = Address::generate(&env);
+    let empty = client.get_by_issuer(&other);
+    assert_eq!(empty.len(), 0);
+
+    // Verify the invoice_created event was emitted by the invoice contract
+    let events = env.events().all();
+    let (event_contract, _topics, _data) = events.last().expect("expected at least one event");
+    assert_eq!(event_contract, client.address);
+}
+
+#[test]
+fn test_create_writes_to_buyer_index() {
+    // Verifies that `create` stores the invoice ID in the buyer's index,
+    // both via a direct storage read and the public `get_by_buyer` query.
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let face_value: u128 = 1_000_000_000;
+    let due_date = env.ledger().timestamp() + 86400;
+
+    let invoice_id = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+
+    // Direct storage read: buyer index count and entry
+    env.as_contract(&client.address, || {
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::BuyerIndexCount(buyer.clone()))
+            .unwrap_or(0);
+        assert_eq!(count, 1);
+
+        let stored_id: BytesN<32> = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::BuyerIndexEntry(buyer.clone(), 0))
+            .unwrap();
+        assert_eq!(stored_id, invoice_id);
+    });
+
+    // Public API: get_by_buyer returns the invoice
+    let invoices = client.get_by_buyer(&buyer);
+    assert_eq!(invoices.len(), 1);
+    assert_eq!(invoices.get(0).unwrap().id, invoice_id);
+
+    // A different (unused) buyer address returns no invoices
+    let other = Address::generate(&env);
+    let empty = client.get_by_buyer(&other);
+    assert_eq!(empty.len(), 0);
+
+    // Verify the invoice_created event was emitted by the invoice contract
+    let events = env.events().all();
+    let (event_contract, _topics, _data) = events.last().expect("expected at least one event");
+    assert_eq!(event_contract, client.address);
+}
+
+#[test]
+fn test_create_writes_to_both_indexes_multiple_invoices() {
+    // Verifies that when the same issuer and buyer create multiple invoices,
+    // both indexes correctly accumulate the invoice IDs.
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+
+    let id1 = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    let id2 = client.create(&issuer, &buyer, &2_000_000_000, &due_date, &usdc);
+
+    // Direct storage: issuer index has 2 entries
+    env.as_contract(&client.address, || {
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::IssuerIndexCount(issuer.clone()))
+            .unwrap_or(0);
+        assert_eq!(count, 2);
+
+        let stored_id_0: BytesN<32> = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::IssuerIndexEntry(issuer.clone(), 0))
+            .unwrap();
+        assert_eq!(stored_id_0, id1);
+
+        let stored_id_1: BytesN<32> = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::IssuerIndexEntry(issuer.clone(), 1))
+            .unwrap();
+        assert_eq!(stored_id_1, id2);
+    });
+
+    // Direct storage: buyer index has 2 entries
+    env.as_contract(&client.address, || {
+        let count: u32 = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::BuyerIndexCount(buyer.clone()))
+            .unwrap_or(0);
+        assert_eq!(count, 2);
+
+        let stored_id_0: BytesN<32> = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::BuyerIndexEntry(buyer.clone(), 0))
+            .unwrap();
+        assert_eq!(stored_id_0, id1);
+
+        let stored_id_1: BytesN<32> = env
+            .storage()
+            .persistent()
+            .get(&crate::DataKey::BuyerIndexEntry(buyer.clone(), 1))
+            .unwrap();
+        assert_eq!(stored_id_1, id2);
+    });
+
+    // Public API assertions
+    assert_eq!(client.get_by_issuer(&issuer).len(), 2);
+    assert_eq!(client.get_by_buyer(&buyer).len(), 2);
+}
+
+#[test]
+fn test_create_indexes_are_party_specific() {
+    // Verifies that issuer and buyer indexes are independent:
+    // an invoice created by issuer A with buyer B should appear in
+    // A's issuer index and B's buyer index, but NOT in B's issuer index
+    // or A's buyer index.
+    let (env, client, issuer, buyer, registry, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+
+    // Issuer should see the invoice in their issuer index
+    let issuer_invoices = client.get_by_issuer(&issuer);
+    assert_eq!(issuer_invoices.len(), 1);
+    assert_eq!(issuer_invoices.get(0).unwrap().id, invoice_id);
+
+    // Buyer should see the invoice in their buyer index
+    let buyer_invoices = client.get_by_buyer(&buyer);
+    assert_eq!(buyer_invoices.len(), 1);
+    assert_eq!(buyer_invoices.get(0).unwrap().id, invoice_id);
+
+    // Issuer should NOT see the invoice in their buyer index
+    let issuer_as_buyer = client.get_by_buyer(&issuer);
+    assert_eq!(issuer_as_buyer.len(), 0);
+
+    // Buyer should NOT see the invoice in their issuer index
+    let buyer_as_issuer = client.get_by_issuer(&buyer);
+    assert_eq!(buyer_as_issuer.len(), 0);
+
+    // An unrelated third party should see nothing in either index
+    let stranger = Address::generate(&env);
+    registry.register(&stranger);
+    assert_eq!(client.get_by_issuer(&stranger).len(), 0);
+    assert_eq!(client.get_by_buyer(&stranger).len(), 0);
+}
+
+#[test]
+fn test_create_indexes_emit_invoice_created_event() {
+    // Verifies that the invoice_created event is emitted with the correct
+    // topics and data payload when an invoice is created.
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let face_value: u128 = 1_000_000_000;
+    let due_date = env.ledger().timestamp() + 86400;
+
+    client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+
+    let contract_id = client.address.clone();
+    let events = env.events().all();
+
+    // Should have at least one event; the last one should be invoice_created
+    let (event_contract, topics, data) = events.last().expect("expected at least one event");
+    assert_eq!(event_contract, contract_id);
+
+    // Topics: (Symbol("invoice_created"), invoice_id, issuer, buyer, funding_asset)
+    let topic0: Symbol = Symbol::try_from_val(&env, &topics.get(0).unwrap()).unwrap();
+    assert_eq!(topic0, Symbol::new(&env, "invoice_created"));
+
+    // Data: face_value as u128
+    let stored_value: u128 = u128::try_from_val(&env, &data).unwrap();
+    assert_eq!(stored_value, face_value);
+}
+
+// ============================================================================
+// View Functions Initialization & Missing Invoice Tests (Issue #465)
+// ============================================================================
+
+#[test]
+fn test_view_functions_initialized_existing_invoice() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let face_value: u128 = 1_000_000_000;
+    let due_date = env.ledger().timestamp() + 86400;
+
+    let invoice_id = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+    client.list_for_financing(&invoice_id, &250);
+
+    assert_eq!(client.get_issuer(&invoice_id), issuer);
+    assert_eq!(client.get_face_value(&invoice_id), face_value);
+    assert_eq!(client.get_funding_asset(&invoice_id), usdc);
+    assert_eq!(client.get_discount_bps(&invoice_id), 250);
+    assert_eq!(client.get_status(&invoice_id), InvoiceStatus::Listed as u32);
+
+    let inv = client.get(&invoice_id);
+    assert_eq!(inv.id, invoice_id);
+    assert_eq!(inv.issuer, issuer);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_get_issuer_missing_invoice_panics() {
+    let (env, client, _, _, _, _) = setup();
+    let fake_id = BytesN::from_array(&env, &[0u8; 32]);
+    client.get_issuer(&fake_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_get_face_value_missing_invoice_panics() {
+    let (env, client, _, _, _, _) = setup();
+    let fake_id = BytesN::from_array(&env, &[0u8; 32]);
+    client.get_face_value(&fake_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_get_funding_asset_missing_invoice_panics() {
+    let (env, client, _, _, _, _) = setup();
+    let fake_id = BytesN::from_array(&env, &[0u8; 32]);
+    client.get_funding_asset(&fake_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_get_discount_bps_missing_invoice_panics() {
+    let (env, client, _, _, _, _) = setup();
+    let fake_id = BytesN::from_array(&env, &[0u8; 32]);
+    client.get_discount_bps(&fake_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_get_status_missing_invoice_panics() {
+    let (env, client, _, _, _, _) = setup();
+    let fake_id = BytesN::from_array(&env, &[0u8; 32]);
+    client.get_status(&fake_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_get_missing_invoice_panics() {
+    let (env, client, _, _, _, _) = setup();
+    let fake_id = BytesN::from_array(&env, &[0u8; 32]);
+    client.get(&fake_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #20)")]
+fn test_get_issuer_uninitialized_panics() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+    let fake_id = BytesN::from_array(&env, &[0u8; 32]);
+    client.get_issuer(&fake_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #20)")]
+fn test_get_face_value_uninitialized_panics() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+    let fake_id = BytesN::from_array(&env, &[0u8; 32]);
+    client.get_face_value(&fake_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #20)")]
+fn test_get_funding_asset_uninitialized_panics() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+    let fake_id = BytesN::from_array(&env, &[0u8; 32]);
+    client.get_funding_asset(&fake_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #20)")]
+fn test_get_discount_bps_uninitialized_panics() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+    let fake_id = BytesN::from_array(&env, &[0u8; 32]);
+    client.get_discount_bps(&fake_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #20)")]
+fn test_get_status_uninitialized_panics() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+    let fake_id = BytesN::from_array(&env, &[0u8; 32]);
+    client.get_status(&fake_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #20)")]
+fn test_get_uninitialized_panics() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, InvoiceContract);
+    let client = InvoiceContractClient::new(&env, &contract_id);
+    let fake_id = BytesN::from_array(&env, &[0u8; 32]);
+    client.get(&fake_id);
 }

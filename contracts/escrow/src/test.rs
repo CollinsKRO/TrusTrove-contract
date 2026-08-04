@@ -1,5 +1,12 @@
 #![cfg(test)]
 
+// Lint baseline (issue #252): every destructured `env` here is consumed by the
+// test body — see `generate_invoice_id(&env, …)`, `Address::generate(&env)`,
+// `env.ledger()`, `env.set_auths(&[])`, `assert_last_event_*(&env, …)`, or by
+// being returned through `setup_without_auths`. Renaming to `_env` would change
+// semantics; do not do so. `cargo clippy --workspace --all-targets -- -D warnings`
+// must remain clean.
+
 use soroban_sdk::{
     contract, contractimpl, contracttype,
     testutils::{Address as _, Events as _, Ledger},
@@ -73,7 +80,7 @@ fn setup() -> (
     let contract_id = env.register_contract(None, EscrowContract);
     let client = EscrowContractClient::new(&env, &contract_id);
 
-    client.initialize(&admin, &pool, &invoice_contract, &usdc_id);
+    client.initialize(&admin, &pool, &usdc_id);
 
     (
         env,
@@ -163,11 +170,10 @@ fn test_initialize() {
     env.mock_all_auths();
     let admin = Address::generate(&env);
     let pool = Address::generate(&env);
-    let invoice = Address::generate(&env);
     let usdc = env.register_contract(None, MockToken);
     let contract_id = env.register_contract(None, EscrowContract);
     let client = EscrowContractClient::new(&env, &contract_id);
-    client.initialize(&admin, &pool, &invoice, &usdc);
+    client.initialize(&admin, &pool, &usdc);
 
     assert_eq!(client.get_locked(&generate_invoice_id(&env, 1)), 0);
 }
@@ -179,20 +185,18 @@ fn test_initialize_twice_panics() {
     env.mock_all_auths();
     let admin = Address::generate(&env);
     let pool = Address::generate(&env);
-    let invoice = Address::generate(&env);
     let usdc = env.register_contract(None, MockToken);
     let contract_id = env.register_contract(None, EscrowContract);
     let client = EscrowContractClient::new(&env, &contract_id);
 
     // First initialize succeeds
-    client.initialize(&admin, &pool, &invoice, &usdc);
+    client.initialize(&admin, &pool, &usdc);
 
     // Second initialize must panic with AlreadyInitialized (Error #1)
     let admin2 = Address::generate(&env);
     let pool2 = Address::generate(&env);
-    let invoice2 = Address::generate(&env);
     let usdc2 = env.register_contract(None, MockToken);
-    client.initialize(&admin2, &pool2, &invoice2, &usdc2);
+    client.initialize(&admin2, &pool2, &usdc2);
 }
 
 // ============================================================================
@@ -315,34 +319,6 @@ fn test_release_to_issuer_pool_address_panics() {
     client.release_to_issuer(&invoice_id, &pool);
 }
 
-#[test]
-#[should_panic(expected = "Error(Contract, #7)")]
-fn test_release_to_issuer_invoice_contract_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let admin = Address::generate(&env);
-    let pool = env.register_contract(None, MockCaller);
-    let invoice = Address::generate(&env);
-    let usdc_id = env.register_contract(None, MockToken);
-
-    let pool_bal_key = BalanceKey(pool.clone());
-    env.as_contract(&usdc_id, || {
-        env.storage()
-            .persistent()
-            .set(&pool_bal_key, &10_000_000_000_000i128);
-    });
-
-    let contract_id = env.register_contract(None, EscrowContract);
-    let client = EscrowContractClient::new(&env, &contract_id);
-    client.initialize(&admin, &pool, &invoice, &usdc_id);
-
-    let invoice_id = generate_invoice_id(&env, 8);
-    client.lock(&invoice_id, &1_000_000_000);
-
-    // Releasing to invoice contract address must panic with InvalidRecipient (#7)
-    client.release_to_issuer(&invoice_id, &invoice);
-}
-
 // ============================================================================
 // Release to Pool Tests
 // ============================================================================
@@ -449,6 +425,16 @@ fn test_release_to_pool_partial_repayment_succeeds() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Contract, #2)")]
+fn test_release_to_pool_unknown_invoice_id_panics() {
+    let (env, client, _admin, _pool, _invoice_contract, _usdc_id, _contract_id) = setup();
+    let unknown_id = generate_invoice_id(&env, 999);
+
+    // Never locked this invoice_id — should panic with NotFound (#2)
+    client.release_to_pool(&unknown_id, &1_000_000_000);
+}
+
+#[test]
 fn test_handle_default_returns_funds_to_pool() {
     let (env, client, _admin, pool, _invoice_contract, _usdc_id, _contract_id) = setup();
     let invoice_id = generate_invoice_id(&env, 1);
@@ -552,6 +538,46 @@ fn test_handle_default_allows_at_grace_period_boundary() {
     let result = client.handle_default(&invoice_id, &pool);
     assert!(result);
     assert_eq!(client.get_locked(&invoice_id), 0);
+}
+
+#[test]
+fn test_handle_default_second_call_returns_false_without_side_effects() {
+    let (env, client, _admin, pool, _invoice_contract, _usdc_id, _contract_id) = setup();
+    let invoice_id = generate_invoice_id(&env, 1);
+    let amount: u128 = 1_000_000_000;
+
+    // Lock funds and advance past grace period
+    client.lock(&invoice_id, &amount);
+    env.ledger().set_timestamp(env.ledger().timestamp() + 60);
+
+    // First call: should succeed, remove the record, and emit default_resolved
+    let result1 = client.handle_default(&invoice_id, &pool);
+    assert!(result1);
+    assert_eq!(client.get_locked(&invoice_id), 0);
+    assert_last_event_three(
+        &env,
+        "default_resolved",
+        invoice_id.clone(),
+        pool.clone(),
+        amount,
+    );
+
+    // Capture event count after first (successful) call
+    let event_count_after_first = env.events().all().len();
+
+    // Second call: should return false with no side effects
+    let result2 = client.handle_default(&invoice_id, &pool);
+    assert!(!result2);
+
+    // Verify state is unchanged — get_locked still 0
+    assert_eq!(client.get_locked(&invoice_id), 0);
+
+    // Verify no new events were emitted by the second call
+    assert_eq!(
+        env.events().all().len(),
+        event_count_after_first,
+        "second handle_default must not emit any events"
+    );
 }
 
 // ============================================================================

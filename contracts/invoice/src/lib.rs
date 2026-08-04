@@ -5,18 +5,15 @@ use soroban_sdk::{
     IntoVal, Map, String, Symbol, Vec,
 };
 
+mod constants;
 mod errors;
 mod events;
 mod test;
 mod types;
 
+pub use constants::*;
 pub use errors::*;
 pub use types::*;
-
-mod storage {
-    pub const TTL_THRESHOLD: u32 = 100;
-    pub const TTL_EXTEND_TO: u32 = 2_000_000;
-}
 
 /// Upper bound on `Invoice::face_value`, in USDC stroops.
 ///
@@ -41,11 +38,9 @@ pub struct InvoiceContract;
 impl InvoiceContract {
     fn save_invoice(env: &Env, inv_key: DataKey, invoice: &Invoice) {
         env.storage().persistent().set(&inv_key, invoice);
-        env.storage().persistent().extend_ttl(
-            &inv_key,
-            storage::TTL_THRESHOLD,
-            storage::TTL_EXTEND_TO,
-        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&inv_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 
     /// Initializes the invoice contract with admin and registry references.
@@ -207,6 +202,7 @@ impl InvoiceContract {
     /// * `InvoiceError::InvalidDueDateTooFar` if `due_date` exceeds
     ///   `now + MAX_INVOICE_LIFETIME_SECONDS` (~10 years).
     /// * `InvoiceError::CounterOverflow` if the internal invoice counter overflows.
+    /// * `InvoiceError::InvalidParticipants` if `issuer` and `buyer` are the same address.
     ///
     /// # Returns
     /// * `BytesN<32>` - The generated invoice ID.
@@ -224,6 +220,10 @@ impl InvoiceContract {
         funding_asset: Address,
     ) -> BytesN<32> {
         issuer.require_auth();
+
+        if issuer == buyer {
+            panic_with_error!(&env, InvoiceError::InvalidParticipants);
+        }
 
         let registry_id: Address = env
             .storage()
@@ -353,6 +353,8 @@ impl InvoiceContract {
     /// # Panics
     /// * `InvoiceError::NotFound` if the invoice does not exist.
     /// * `InvoiceError::InvalidStatusTransition` if invoice status is not `Created`.
+    /// * `InvoiceError::InvalidDiscount` if `discount_bps` is zero (a 0% discount is
+    ///   nonsensical — the pool would fund at face value with zero yield).
     /// * `InvoiceError::DiscountTooHigh` if `discount_bps` is greater than 5000.
     ///
     /// # Returns
@@ -372,6 +374,9 @@ impl InvoiceContract {
         invoice.issuer.require_auth();
         if invoice.status != InvoiceStatus::Created {
             panic_with_error!(&env, InvoiceError::InvalidStatusTransition);
+        }
+        if discount_bps == 0 {
+            panic_with_error!(&env, InvoiceError::InvalidDiscount);
         }
         if discount_bps > 5000 {
             panic_with_error!(&env, InvoiceError::DiscountTooHigh);
@@ -800,6 +805,32 @@ impl InvoiceContract {
     /// ```ignore
     /// client.trigger_default(&invoice_id);
     /// ```
+    /// Triggers default on a past-due invoice.
+    ///
+    /// Default is permitted once `now >= due_date` — the due date has been
+    /// reached or passed. This is consistent with the `create` check that
+    /// rejects `due_date <= now` (due dates must be in the future).
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `invoice_id` - The invoice to default.
+    ///
+    /// # Auth
+    /// Requires authorization from the stored admin address.
+    ///
+    /// # Panics
+    /// * `InvoiceError::NotFound` if the admin, invoice, or funding pool cannot be found.
+    /// * `InvoiceError::InvalidStatusTransition` if invoice is not `Funded`, `Active`, or `Confirmed`.
+    /// * `InvoiceError::DueDateNotPassed` if `now < due_date` — the due date
+    ///   has not yet been reached.
+    ///
+    /// # Returns
+    /// * `bool` - `true` when default processing succeeds.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.trigger_default(&invoice_id);
+    /// ```
     pub fn trigger_default(env: Env, invoice_id: BytesN<32>) -> bool {
         let inv_key = DataKey::Invoice(invoice_id.clone());
         let mut invoice: Invoice = env
@@ -831,6 +862,74 @@ impl InvoiceContract {
         let mut args = Vec::new(&env);
         args.push_back(invoice_id.clone().into_val(&env));
         let _: bool = env.invoke_contract(&pool, &Symbol::new(&env, "handle_default"), args);
+        events::invoice_defaulted(&env, &invoice_id);
+        true
+    }
+
+    /// Marks an invoice as defaulted, called by the pool contract during
+    /// default processing.
+    ///
+    /// This function is invoked as a cross-contract call from
+    /// `pool.handle_default()` and is responsible for persisting the
+    /// `Defaulted` status on the invoice record, updating the status index,
+    /// and emitting the `invoice_defaulted` event.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `invoice_id` - The invoice to mark as defaulted.
+    ///
+    /// # Auth
+    /// Requires authorization from the invoice's funding pool contract
+    /// (retrieved from the invoice record's `funding_pool` field).
+    ///
+    /// # Panics
+    /// * `InvoiceError::NotFound` if the invoice cannot be found or has no
+    ///   recorded funding pool.
+    /// * `InvoiceError::InvalidStatusTransition` if the invoice status is not
+    ///   `Funded`, `Active`, or `Confirmed` (or already `Defaulted`, which is
+    ///   accepted as a no-op for idempotency).
+    ///
+    /// # Returns
+    /// * `bool` - `true` when the invoice is marked as defaulted.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.mark_defaulted(&invoice_id);
+    /// ```
+    pub fn mark_defaulted(env: Env, invoice_id: BytesN<32>) -> bool {
+        let inv_key = DataKey::Invoice(invoice_id.clone());
+        let mut invoice: Invoice = env
+            .storage()
+            .persistent()
+            .get(&inv_key)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
+
+        let pool: Address = invoice
+            .funding_pool
+            .clone()
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
+        pool.require_auth();
+
+        // Allow transition from Funded, Active, or Confirmed to Defaulted.
+        // If already Defaulted, treat as a no-op for idempotency (e.g., when
+        // trigger_default already performed the transition before calling
+        // pool.handle_default).
+        let valid_transition = invoice.status == InvoiceStatus::Funded
+            || invoice.status == InvoiceStatus::Active
+            || invoice.status == InvoiceStatus::Confirmed;
+        if !valid_transition {
+            if invoice.status == InvoiceStatus::Defaulted {
+                return true;
+            }
+            panic_with_error!(&env, InvoiceError::InvalidStatusTransition);
+        }
+
+        let prev_status = invoice.status;
+        invoice.status = InvoiceStatus::Defaulted;
+        Self::save_invoice(&env, inv_key, &invoice);
+        Self::extend_instance_ttl(&env);
+
+        move_status_index(&env, &invoice_id, prev_status, InvoiceStatus::Defaulted);
         events::invoice_defaulted(&env, &invoice_id);
         true
     }
@@ -951,6 +1050,7 @@ impl InvoiceContract {
     /// No authorization is required.
     ///
     /// # Panics
+    /// * `InvoiceError::NotInitialized` if the contract has not been initialized.
     /// * `InvoiceError::NotFound` if the invoice cannot be found.
     ///
     /// # Returns
@@ -961,12 +1061,7 @@ impl InvoiceContract {
     /// let status = client.get_status(&invoice_id);
     /// ```
     pub fn get_status(env: Env, invoice_id: BytesN<32>) -> u32 {
-        let invoice: Invoice = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Invoice(invoice_id))
-            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
-        invoice.status as u32
+        Self::get_invoice(&env, invoice_id).status as u32
     }
 
     /// Returns the face value of an invoice.
@@ -979,6 +1074,7 @@ impl InvoiceContract {
     /// No authorization is required.
     ///
     /// # Panics
+    /// * `InvoiceError::NotInitialized` if the contract has not been initialized.
     /// * `InvoiceError::NotFound` if the invoice cannot be found.
     ///
     /// # Returns
@@ -989,12 +1085,7 @@ impl InvoiceContract {
     /// let face_value = client.get_face_value(&invoice_id);
     /// ```
     pub fn get_face_value(env: Env, invoice_id: BytesN<32>) -> u128 {
-        let invoice: Invoice = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Invoice(invoice_id))
-            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
-        invoice.face_value
+        Self::get_invoice(&env, invoice_id).face_value
     }
 
     /// Returns the discount basis points for an invoice.
@@ -1007,6 +1098,7 @@ impl InvoiceContract {
     /// No authorization is required.
     ///
     /// # Panics
+    /// * `InvoiceError::NotInitialized` if the contract has not been initialized.
     /// * `InvoiceError::NotFound` if the invoice cannot be found.
     ///
     /// # Returns
@@ -1017,12 +1109,7 @@ impl InvoiceContract {
     /// let discount = client.get_discount_bps(&invoice_id);
     /// ```
     pub fn get_discount_bps(env: Env, invoice_id: BytesN<32>) -> u32 {
-        let invoice: Invoice = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Invoice(invoice_id))
-            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
-        invoice.discount_bps
+        Self::get_invoice(&env, invoice_id).discount_bps
     }
 
     /// Returns the funding asset for an invoice.
@@ -1035,6 +1122,7 @@ impl InvoiceContract {
     /// No authorization is required.
     ///
     /// # Panics
+    /// * `InvoiceError::NotInitialized` if the contract has not been initialized.
     /// * `InvoiceError::NotFound` if the invoice cannot be found.
     ///
     /// # Returns
@@ -1045,12 +1133,7 @@ impl InvoiceContract {
     /// let asset = client.get_funding_asset(&invoice_id);
     /// ```
     pub fn get_funding_asset(env: Env, invoice_id: BytesN<32>) -> Address {
-        let invoice: Invoice = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Invoice(invoice_id))
-            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
-        invoice.funding_asset
+        Self::get_invoice(&env, invoice_id).funding_asset
     }
 
     /// Retrieves the full invoice record by ID.
@@ -1063,6 +1146,7 @@ impl InvoiceContract {
     /// No authorization is required.
     ///
     /// # Panics
+    /// * `InvoiceError::NotInitialized` if the contract has not been initialized.
     /// * `InvoiceError::NotFound` if the invoice cannot be found.
     ///
     /// # Returns
@@ -1073,10 +1157,7 @@ impl InvoiceContract {
     /// let invoice = client.get(&invoice_id);
     /// ```
     pub fn get(env: Env, invoice_id: BytesN<32>) -> Invoice {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Invoice(invoice_id))
-            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound))
+        Self::get_invoice(&env, invoice_id)
     }
 
     /// Lists invoices for a given status.
@@ -1246,6 +1327,7 @@ impl InvoiceContract {
     /// No authorization is required.
     ///
     /// # Panics
+    /// * `InvoiceError::NotInitialized` if the contract has not been initialized.
     /// * `InvoiceError::NotFound` if the invoice cannot be found.
     ///
     /// # Returns
@@ -1256,12 +1338,7 @@ impl InvoiceContract {
     /// let issuer = client.get_issuer(&invoice_id);
     /// ```
     pub fn get_issuer(env: Env, invoice_id: BytesN<32>) -> Address {
-        let invoice: Invoice = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Invoice(invoice_id))
-            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
-        invoice.issuer
+        Self::get_invoice(&env, invoice_id).issuer
     }
 
     pub fn transfer_ownership(env: Env, new_admin: Address) {
@@ -1277,8 +1354,24 @@ impl InvoiceContract {
         Self::extend_instance_ttl(&env);
     }
 
+    fn require_initialized(env: &Env) {
+        if !env.storage().instance().has(&DataKey::Admin) {
+            panic_with_error!(env, InvoiceError::NotInitialized);
+        }
+    }
+
+    fn get_invoice(env: &Env, invoice_id: BytesN<32>) -> Invoice {
+        Self::require_initialized(env);
+        env.storage()
+            .persistent()
+            .get(&DataKey::Invoice(invoice_id))
+            .unwrap_or_else(|| panic_with_error!(env, InvoiceError::NotFound))
+    }
+
     fn extend_instance_ttl(env: &Env) {
-        env.storage().instance().extend_ttl(100, 2_000_000);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 }
 
@@ -1323,10 +1416,10 @@ fn extend_issuer_index(env: &Env, issuer: &Address, invoice_id: &BytesN<32>) {
     env.storage().persistent().set(&count_key, &(count + 1));
     env.storage()
         .persistent()
-        .extend_ttl(&entry_key, 100, 2_000_000);
+        .extend_ttl(&entry_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     env.storage()
         .persistent()
-        .extend_ttl(&count_key, 100, 2_000_000);
+        .extend_ttl(&count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 /// Adds an invoice ID to the buyer's index if not already present.
@@ -1359,10 +1452,10 @@ fn extend_buyer_index(env: &Env, buyer: &Address, invoice_id: &BytesN<32>) {
     env.storage().persistent().set(&count_key, &(count + 1));
     env.storage()
         .persistent()
-        .extend_ttl(&entry_key, 100, 2_000_000);
+        .extend_ttl(&entry_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     env.storage()
         .persistent()
-        .extend_ttl(&count_key, 100, 2_000_000);
+        .extend_ttl(&count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 /// Adds an invoice ID to the status index if not already present.
@@ -1396,10 +1489,10 @@ fn extend_status_index(env: &Env, status: InvoiceStatus, invoice_id: &BytesN<32>
     env.storage().persistent().set(&count_key, &(count + 1));
     env.storage()
         .persistent()
-        .extend_ttl(&entry_key, 100, 2_000_000);
+        .extend_ttl(&entry_key, TTL_THRESHOLD, TTL_EXTEND_TO);
     env.storage()
         .persistent()
-        .extend_ttl(&count_key, 100, 2_000_000);
+        .extend_ttl(&count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
 /// Moves an invoice ID from one status index to another, with idempotency for replayed transitions.
