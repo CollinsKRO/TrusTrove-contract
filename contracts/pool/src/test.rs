@@ -1149,12 +1149,14 @@ fn test_handle_default() {
 }
 
 #[test]
-fn test_handle_default_preserves_share_price() {
-fn test_handle_default_rejects_double_default() {
+fn test_handle_default_realizes_loss_without_burning_shares() {
     let te = setup();
     te.pool.deposit(&te.lp, &100_000_000_000);
     let invoice_id = create_and_list(&te, &te.usdc_id);
     te.pool.fund_invoice(&invoice_id);
+    te.env
+        .ledger()
+        .set_timestamp(te.env.ledger().timestamp() + 60);
 
     let lp_before = te.pool.get_lp_position(&te.lp);
     let pool_before = te.pool.get_stats();
@@ -1169,16 +1171,34 @@ fn test_handle_default_rejects_double_default() {
     let lp_after = te.pool.get_lp_position(&te.lp);
     let pool_after = te.pool.get_stats();
 
-    assert_eq!(pool_after.total_deposits, pool_before.total_deposits);
+    // A default writes the funded amount off against pool deposits (realising
+    // the loss) while leaving the share supply untouched: total_shares and the
+    // LP's share balance are preserved, and total_loss_realised tracks the
+    // loss. Deposit value falls by exactly the funded amount.
+    assert_eq!(
+        pool_after.total_deposits,
+        pool_before.total_deposits - DEFAULT_FUNDED_AMOUNT
+    );
     assert_eq!(pool_after.total_shares, pool_before.total_shares);
     assert_eq!(lp_after.shares, lp_before.shares);
-    assert_eq!(lp_after.usdc_value, lp_before.usdc_value);
+    assert_eq!(
+        lp_after.usdc_value,
+        lp_before.usdc_value - DEFAULT_FUNDED_AMOUNT
+    );
     assert_eq!(pool_after.total_funded, 0);
     assert_eq!(pool_after.active_invoice_count, 0);
+    assert_eq!(
+        pool_after.total_loss_realised,
+        pool_before.total_loss_realised + DEFAULT_FUNDED_AMOUNT
+    );
 }
 
 #[test]
-fn test_handle_default_unknown_invoice_returns_false() {
+fn test_handle_default_rejects_double_default() {
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+    te.pool.fund_invoice(&invoice_id);
     te.env
         .ledger()
         .set_timestamp(te.env.ledger().timestamp() + 60);
