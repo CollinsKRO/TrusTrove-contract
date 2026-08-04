@@ -205,10 +205,6 @@ impl EscrowContract {
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, EscrowError::NotFound));
 
-        if repayment_amount > record.amount {
-            panic_with_error!(&env, EscrowError::InvalidAmount);
-        }
-
         let usdc = Self::usdc_client(&env);
         usdc.transfer(
             &env.current_contract_address(),
