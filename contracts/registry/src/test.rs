@@ -2,7 +2,10 @@
 
 extern crate std;
 
-use crate::{DataKey, Profile, RegistryContract, RegistryContractClient, Role, VerificationStatus};
+use crate::{
+    DataKey, Profile, RegistryContract, RegistryContractClient, Role, VerificationStatus,
+    TTL_EXTEND_TO, TTL_THRESHOLD,
+};
 use proptest::prelude::*;
 use proptest::test_runner::{Config as ProptestConfig, TestRunner};
 use soroban_sdk::{
@@ -180,9 +183,11 @@ fn test_revoke_wrong_auth_panics() {
         env.storage()
             .persistent()
             .set(&DataKey::Profile(issuer.clone()), &profile);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Profile(issuer.clone()), 100, 2_000_000);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Profile(issuer.clone()),
+            TTL_THRESHOLD,
+            TTL_EXTEND_TO,
+        );
     });
 
     assert!(client.is_verified(&issuer));
@@ -298,9 +303,11 @@ fn test_reinstate_wrong_auth_panics() {
         env.storage()
             .persistent()
             .set(&DataKey::Profile(issuer.clone()), &profile);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Profile(issuer.clone()), 100, 2_000_000);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Profile(issuer.clone()),
+            TTL_THRESHOLD,
+            TTL_EXTEND_TO,
+        );
     });
 
     // The issuer is not the admin and env.mock_all_auths() was not called,
@@ -379,9 +386,11 @@ fn test_update_metadata_wrong_auth_panics() {
         env.storage()
             .persistent()
             .set(&DataKey::Profile(issuer.clone()), &profile);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Profile(issuer.clone()), 100, 2_000_000);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Profile(issuer.clone()),
+            TTL_THRESHOLD,
+            TTL_EXTEND_TO,
+        );
     });
 
     let updated_metadata = map![
@@ -472,9 +481,11 @@ fn test_update_profile_wrong_auth_panics() {
         env.storage()
             .persistent()
             .set(&DataKey::Profile(issuer.clone()), &profile);
-        env.storage()
-            .persistent()
-            .extend_ttl(&DataKey::Profile(issuer.clone()), 100, 2_000_000);
+        env.storage().persistent().extend_ttl(
+            &DataKey::Profile(issuer.clone()),
+            TTL_THRESHOLD,
+            TTL_EXTEND_TO,
+        );
     });
 
     let updated_metadata = map![
@@ -926,6 +937,62 @@ fn test_get_verification_status_re_verified_returns_verified() {
     );
 }
 
+// ============== ISSUE #173: TRANSFER ADMIN ==============
+
+#[test]
+fn test_transfer_admin_changes_admin() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.initialize(&admin);
+    client.transfer_admin(&new_admin);
+    assert_eq!(client.get_admin(), new_admin);
+}
+
+#[test]
+#[should_panic]
+fn test_transfer_admin_by_non_admin_panics() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.initialize(&admin);
+    env.set_auths(&[]);
+    client.transfer_admin(&new_admin);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_transfer_admin_before_initialize_panics() {
+    let (env, client) = setup();
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+}
+
+#[test]
+fn test_transfer_admin_emits_event() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.initialize(&admin);
+    client.transfer_admin(&new_admin);
+    assert_eq!(
+        env.events().all(),
+        vec![
+            &env,
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "contract_initialized"), admin.clone()).into_val(&env),
+                ().into_val(&env),
+            ),
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "admin_transferred"), admin.clone()).into_val(&env),
+                new_admin.clone().into_val(&env),
+            ),
+        ]
+    );
+}
+
 // ============== ISSUE #61: TRANSFER OWNERSHIP ==============
 
 #[test]
@@ -1219,6 +1286,61 @@ fn test_metadata_buyer_empty_map_accepted() {
     assert_eq!(profile.metadata.len(), 0);
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_register_buyer_rejects_oversized_metadata_key() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let buyer = Address::generate(&env);
+    let long_key = "k".repeat((crate::MAX_METADATA_KEY_LEN + 1) as usize);
+    let metadata = map![
+        &env,
+        (
+            String::from_str(&env, &long_key),
+            String::from_str(&env, "value")
+        )
+    ];
+    client.register_buyer(&buyer, &metadata);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_register_issuer_rejects_oversized_metadata_value() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    let long_value = "v".repeat((crate::MAX_METADATA_VALUE_LEN + 1) as usize);
+    let metadata = map![
+        &env,
+        (
+            String::from_str(&env, "key"),
+            String::from_str(&env, &long_value)
+        )
+    ];
+    client.register_issuer(&issuer, &metadata);
+}
+
+#[test]
+fn test_register_metadata_at_limits_accepted() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let buyer = Address::generate(&env);
+    let key_prefix = "k".repeat((crate::MAX_METADATA_KEY_LEN - 2) as usize);
+    let value = "v".repeat(crate::MAX_METADATA_VALUE_LEN as usize);
+    let mut metadata = map![&env];
+    for i in 0..crate::MAX_METADATA_SIZE {
+        let key = std::format!("{key_prefix}{i:02}");
+        metadata.set(String::from_str(&env, &key), String::from_str(&env, &value));
+    }
+    assert_eq!(metadata.len(), crate::MAX_METADATA_SIZE);
+    assert!(client.register_buyer(&buyer, &metadata));
+    let profile = client.get_profile(&buyer);
+    assert_eq!(profile.metadata.len(), crate::MAX_METADATA_SIZE);
+}
+
 // ============== EVENT-EMISSION TESTS (#188) ==============
 
 #[test]
@@ -1345,7 +1467,7 @@ fn test_get_profile_extends_ttl() {
     let key = DataKey::Profile(issuer.clone());
 
     // Record the initial remaining TTL, then advance the ledger so the
-    // remaining TTL drops below the write-path threshold (100 ledgers).
+    // remaining TTL drops below the write-path threshold.
     let ttl_before_drain: u32 =
         env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
     // Advance to leave ~50 ledgers remaining.
@@ -1355,7 +1477,7 @@ fn test_get_profile_extends_ttl() {
     let ttl_before_read: u32 =
         env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
     assert!(
-        ttl_before_read < 100,
+        ttl_before_read < TTL_THRESHOLD,
         "TTL should be below threshold before read, got {ttl_before_read}"
     );
 
@@ -1389,7 +1511,7 @@ fn test_is_verified_extends_ttl() {
     let contract_id = client.address.clone();
     let key = DataKey::Profile(issuer.clone());
 
-    // Drain TTL below the threshold (100).
+    // Drain TTL below the threshold.
     let ttl_before_drain: u32 =
         env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
     env.ledger()
@@ -1398,7 +1520,7 @@ fn test_is_verified_extends_ttl() {
     let ttl_before_read: u32 =
         env.as_contract(&contract_id, || env.storage().persistent().get_ttl(&key));
     assert!(
-        ttl_before_read < 100,
+        ttl_before_read < TTL_THRESHOLD,
         "TTL should be below threshold before read, got {ttl_before_read}"
     );
 
@@ -1445,7 +1567,7 @@ fn test_get_admin_extends_instance_ttl() {
 
     let contract_id = client.address.clone();
 
-    // Drain instance TTL below the threshold (100).
+    // Drain instance TTL below the threshold.
     let ttl_before_drain: u32 =
         env.as_contract(&contract_id, || env.storage().instance().get_ttl());
     env.ledger()
@@ -1453,7 +1575,7 @@ fn test_get_admin_extends_instance_ttl() {
 
     let ttl_before_read: u32 = env.as_contract(&contract_id, || env.storage().instance().get_ttl());
     assert!(
-        ttl_before_read < 100,
+        ttl_before_read < TTL_THRESHOLD,
         "Instance TTL should be below threshold before read, got {ttl_before_read}"
     );
 

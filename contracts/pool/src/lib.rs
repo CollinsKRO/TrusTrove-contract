@@ -4,16 +4,16 @@ use soroban_sdk::{
     contract, contractimpl, panic_with_error, token, Address, BytesN, Env, IntoVal, Symbol, Vec,
 };
 
+mod constants;
 mod errors;
 mod events;
 mod test;
-mod ttl;
 mod types;
+
+pub use constants::*;
 
 pub use errors::*;
 pub use types::*;
-
-use ttl::{EXTEND_TO, THRESHOLD};
 
 /// Minimum initial deposit floor (1 USDC = 10_000_000 stroops).
 /// Prevents share-price griefing by requiring the initial deposit in an empty pool
@@ -206,7 +206,7 @@ impl PoolContract {
             .set(&lp_shares_key, &(lp_shares + shares_to_issue));
         env.storage()
             .persistent()
-            .extend_ttl(&lp_shares_key, THRESHOLD, EXTEND_TO);
+            .extend_ttl(&lp_shares_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         let lp_deposit_count_key = DataKey::LPDepositCount(lp.clone());
         let count: u32 = env
@@ -219,7 +219,7 @@ impl PoolContract {
             .set(&lp_deposit_count_key, &(count + 1));
         env.storage()
             .persistent()
-            .extend_ttl(&lp_deposit_count_key, THRESHOLD, EXTEND_TO);
+            .extend_ttl(&lp_deposit_count_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         let lp_init_key = DataKey::LPInitialDeposit(lp.clone());
         let init_dep: u128 = env.storage().persistent().get(&lp_init_key).unwrap_or(0);
@@ -228,7 +228,7 @@ impl PoolContract {
             .set(&lp_init_key, &(init_dep + usdc_amount));
         env.storage()
             .persistent()
-            .extend_ttl(&lp_init_key, THRESHOLD, EXTEND_TO);
+            .extend_ttl(&lp_init_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         events::lp_deposited(&env, &lp, usdc_amount, shares_to_issue);
         Self::extend_instance_ttl(&env);
@@ -315,7 +315,7 @@ impl PoolContract {
             .set(&lp_shares_key, &remaining_shares);
         env.storage()
             .persistent()
-            .extend_ttl(&lp_shares_key, THRESHOLD, EXTEND_TO);
+            .extend_ttl(&lp_shares_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         if remaining_shares == 0 {
             // Full withdrawal: reset LP-scoped storage to prevent stale state
@@ -335,7 +335,7 @@ impl PoolContract {
             env.storage().persistent().set(&init_dep_key, &new_init_dep);
             env.storage()
                 .persistent()
-                .extend_ttl(&init_dep_key, THRESHOLD, EXTEND_TO);
+                .extend_ttl(&init_dep_key, TTL_THRESHOLD, TTL_EXTEND_TO);
         } else {
             env.storage().persistent().remove(&init_dep_key);
         }
@@ -347,7 +347,7 @@ impl PoolContract {
             .set(&yield_key, &(prev_yield + yield_earned));
         env.storage()
             .persistent()
-            .extend_ttl(&yield_key, THRESHOLD, EXTEND_TO);
+            .extend_ttl(&yield_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         events::lp_withdrawn(&env, &lp, usdc_to_return, shares);
         Self::extend_instance_ttl(&env);
@@ -478,7 +478,7 @@ impl PoolContract {
         env.storage().persistent().set(&funded_key, &funded_amount);
         env.storage()
             .persistent()
-            .extend_ttl(&funded_key, THRESHOLD, EXTEND_TO);
+            .extend_ttl(&funded_key, TTL_THRESHOLD, TTL_EXTEND_TO);
 
         events::invoice_funded(&env, &invoice_id, funded_amount);
         Self::extend_instance_ttl(&env);
@@ -651,7 +651,18 @@ impl PoolContract {
         true
     }
 
-    /// Forwards a defaulted invoice to escrow default handling.
+    /// Forwards a defaulted invoice to escrow default handling and updates
+    /// the invoice status on the invoice contract.
+    ///
+    /// This function performs the following cross-contract sequence:
+    /// 1. Calls `escrow.handle_default()` to release escrowed funds back
+    ///    to the pool.
+    /// 2. Calls `invoice.mark_defaulted()` to persist the `Defaulted` status
+    ///    on the invoice record, update the status index, and emit the
+    ///    `invoice_defaulted` event.
+    /// 3. Updates the pool's local accounting (TotalFunded, TotalDeposits,
+    ///    TotalLossRealised, ActiveInvoiceCount) and removes the funded
+    ///    invoice entry.
     ///
     /// # Arguments
     /// * `env` - The Soroban environment.
@@ -715,6 +726,21 @@ impl PoolContract {
         env.storage()
             .instance()
             .set(&DataKey::ActiveInvoiceCount, &new_active_count);
+
+        // Persist the Defaulted status on the invoice contract (step 2 of the
+        // documented cross-contract sequence). This runs after the active-count
+        // underflow check so a mismatched default still surfaces
+        // ActiveCountUnderflow (#17) rather than an invoice lookup error from
+        // mark_defaulted. mark_defaulted is idempotent: when
+        // invoice.trigger_default already transitioned the status to Defaulted
+        // before invoking this pool entry point, the call is a no-op.
+        let mut args = Vec::new(&env);
+        args.push_back(invoice_id.clone().into_val(&env));
+        let _: bool = env.invoke_contract(
+            &invoice_contract,
+            &Symbol::new(&env, "mark_defaulted"),
+            args,
+        );
 
         let total_loss = totals.loss_realised;
         env.storage()
@@ -939,6 +965,8 @@ impl PoolContract {
     }
 
     fn extend_instance_ttl(env: &Env) {
-        env.storage().instance().extend_ttl(THRESHOLD, EXTEND_TO);
+        env.storage()
+            .instance()
+            .extend_ttl(TTL_THRESHOLD, TTL_EXTEND_TO);
     }
 }
