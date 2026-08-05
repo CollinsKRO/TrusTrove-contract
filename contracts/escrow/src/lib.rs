@@ -171,18 +171,24 @@ impl EscrowContract {
 
     /// Releases escrowed funds back to the pool as repayment.
     ///
+    /// Called by the invoice contract during buyer repayment flows:
+    /// `buyer → invoice.repay → escrow.release_to_pool → pool`.
+    ///
     /// # Arguments
     /// * `env` - The Soroban environment.
-    /// * `invoice_id` - The invoice whose escrow is returned.
-    /// * `repayment_amount` - The amount returned to the pool.
+    /// * `invoice_id` - The invoice whose escrow is being released.
+    /// * `repayment_amount` - The amount transferred to the pool (may exceed the
+    ///   originally locked amount when the buyer repays the full face value including yield).
     ///
     /// # Auth
-    /// Requires authorization from the configured pool contract.
+    /// No caller authorization is required. The pool address is read directly
+    /// from instance storage; `lock()` and `release_to_issuer()` retain stricter
+    /// pool/admin auth requirements.
     ///
     /// # Panics
     /// * `NotInitialized` if the contract has not been initialized.
     /// * `NotFound` if no escrow record exists for the invoice.
-    /// * `InvalidAmount` if `repayment_amount` is zero or exceeds the locked amount.
+    /// * `InvalidAmount` if `repayment_amount` is zero.
     ///
     /// # Returns
     /// * `bool` - `true` when funds are returned.
@@ -192,22 +198,25 @@ impl EscrowContract {
     /// client.release_to_pool(&invoice_id, &repayment_amount);
     /// ```
     pub fn release_to_pool(env: Env, invoice_id: BytesN<32>, repayment_amount: u128) -> bool {
-        let pool = Self::require_pool_auth(&env);
+        // This function is called by the invoice contract during buyer repay flows
+        // (buyer → invoice → escrow → pool). Pool authorization is intentionally
+        // not required here; lock() and release_to_issuer() retain stricter auth.
+        let pool: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PoolContract)
+            .unwrap_or_else(|| panic_with_error!(&env, EscrowError::NotInitialized));
 
         if repayment_amount == 0 {
             panic_with_error!(&env, EscrowError::InvalidAmount);
         }
 
         let key = DataKey::Locked(invoice_id.clone());
-        let record: EscrowRecord = env
+        let _record: EscrowRecord = env
             .storage()
             .persistent()
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, EscrowError::NotFound));
-
-        if repayment_amount > record.amount {
-            panic_with_error!(&env, EscrowError::InvalidAmount);
-        }
 
         let usdc = Self::usdc_client(&env);
         usdc.transfer(

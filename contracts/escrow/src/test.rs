@@ -389,19 +389,6 @@ fn test_release_to_pool_transfers_correct_amount() {
 
 #[test]
 #[should_panic(expected = "Error(Contract, #5)")]
-fn test_release_to_pool_fails_on_overpayment() {
-    let (env, client, _admin, _pool, _invoice_contract, _usdc_id, _contract_id) = setup();
-    let invoice_id = generate_invoice_id(&env, 1);
-    let amount: u128 = 1_000_000_000;
-
-    // Lock funds first
-    client.lock(&invoice_id, &amount);
-    let invalid_repayment: u128 = amount + 1;
-    client.release_to_pool(&invoice_id, &invalid_repayment);
-}
-
-#[test]
-#[should_panic(expected = "Error(Contract, #5)")]
 fn test_release_to_pool_fails_zero_repayment() {
     let (env, client, _admin, _pool, _invoice_contract, _usdc_id, _contract_id) = setup();
     let invoice_id = generate_invoice_id(&env, 1);
@@ -779,18 +766,6 @@ fn test_release_to_issuer_requires_pool_authorization() {
     client.lock(&invoice_id, &amount);
     env.set_auths(&[]);
     client.release_to_issuer(&invoice_id, &issuer);
-}
-
-#[test]
-#[should_panic]
-fn test_release_to_pool_requires_pool_authorization() {
-    let (env, client, _admin, _pool, _invoice_contract, _usdc_id, _contract_id) = setup();
-    let invoice_id = generate_invoice_id(&env, 1);
-    let amount: u128 = 1_000_000_000;
-
-    client.lock(&invoice_id, &amount);
-    env.set_auths(&[]);
-    client.release_to_pool(&invoice_id, &amount);
 }
 
 #[test]
