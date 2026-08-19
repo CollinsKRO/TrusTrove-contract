@@ -84,7 +84,6 @@ fn test_agent_signing_key() -> k256::ecdsa::SigningKey {
 }
 
 fn test_agent_pubkey(env: &Env) -> BytesN<65> {
-    use k256::elliptic_curve::sec1::ToEncodedPoint;
     let point = test_agent_signing_key()
         .verifying_key()
         .to_encoded_point(false);
