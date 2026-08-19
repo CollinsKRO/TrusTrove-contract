@@ -23,4 +23,7 @@ pub enum InvoiceError {
     InvalidExpiryWindow = 18,
     InvalidParticipants = 19,
     NotInitialized = 20,
+    UntrustedSigner = 21,
+    AlreadyAttested = 22,
+    VerificationRequired = 23,
 }

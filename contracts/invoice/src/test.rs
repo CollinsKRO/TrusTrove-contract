@@ -5,7 +5,9 @@ use proptest::test_runner::{Config as ProptestConfig, TestRunner};
 use soroban_sdk::{
     contract, contractimpl, contracttype,
     testutils::{Address as _, Events as _, Ledger},
-    token, Address, BytesN, Env, IntoVal, Symbol, TryFromVal,
+    token,
+    xdr::ToXdr,
+    Address, BytesN, Env, IntoVal, Symbol, TryFromVal,
 };
 
 use crate::{InvoiceContract, InvoiceContractClient, InvoiceStatus, TTL_EXTEND_TO, TTL_THRESHOLD};
@@ -190,6 +192,83 @@ fn mock_pool_with_asset(env: &Env, asset: &Address) -> Address {
     pool_id
 }
 
+// --------------- Mock Agent Registry (Underwrite) ---------------
+//
+// Stands in for the agent-registry contract from the separate
+// `underwrite-contract` repo. Tests sign with a real secp256k1 key so
+// `submit_attestation`'s recovery + registry-lookup path is exercised for
+// real rather than mocked out.
+
+#[contract]
+pub struct MockAgentRegistry;
+
+#[contractimpl]
+impl MockAgentRegistry {
+    pub fn get_agent(env: Env, agent_id: Symbol) -> Option<crate::Agent> {
+        env.storage().persistent().get(&AgentKey(agent_id))
+    }
+
+    pub fn register_agent(env: Env, agent_id: Symbol, agent: crate::Agent) {
+        env.storage().persistent().set(&AgentKey(agent_id), &agent);
+    }
+}
+
+#[contracttype]
+pub struct AgentKey(Symbol);
+
+const TEST_AGENT_SEED: [u8; 32] = [7u8; 32];
+
+fn test_agent_signing_key() -> k256::ecdsa::SigningKey {
+    k256::ecdsa::SigningKey::from_slice(&TEST_AGENT_SEED).unwrap()
+}
+
+fn test_agent_pubkey(env: &Env) -> BytesN<65> {
+    let point = test_agent_signing_key()
+        .verifying_key()
+        .to_encoded_point(false);
+    let mut bytes = [0u8; 65];
+    bytes.copy_from_slice(point.as_bytes());
+    BytesN::from_array(env, &bytes)
+}
+
+/// Deploys a fresh mock agent-registry, registers one active agent with a
+/// real secp256k1 keypair, points `client` at it, and submits a validly
+/// signed attestation for `invoice_id`. Centralizes the plumbing so
+/// individual tests can just call this right before `list_for_financing`.
+fn attest(env: &Env, client: &InvoiceContractClient, invoice_id: &BytesN<32>) {
+    let agent_id = Symbol::new(env, "test_agent");
+    let registry_id = env.register_contract(None, MockAgentRegistry);
+    let registry_client = MockAgentRegistryClient::new(env, &registry_id);
+    registry_client.register_agent(
+        &agent_id,
+        &crate::Agent {
+            active: true,
+            pubkey: test_agent_pubkey(env),
+        },
+    );
+    client.set_agent_registry_contract(&registry_id);
+
+    let payload = crate::AttestationPayload {
+        domain_separator: BytesN::from_array(env, &crate::ATTESTATION_DOMAIN_SEPARATOR),
+        invoice_id: invoice_id.clone(),
+        risk_score: 5000,
+        evidence_hash: BytesN::from_array(env, &[9u8; 32]),
+        agent_id,
+        nonce: 1,
+    };
+    let payload_bytes = payload.to_xdr(env);
+    let digest = env.crypto().keccak256(&payload_bytes).to_array();
+    let (sig, recid) = test_agent_signing_key()
+        .sign_prehash_recoverable(&digest)
+        .unwrap();
+    let mut sig_bytes = [0u8; 65];
+    sig_bytes[..64].copy_from_slice(&sig.to_bytes());
+    sig_bytes[64] = recid.to_byte();
+    let signature = BytesN::from_array(env, &sig_bytes);
+
+    client.submit_attestation(invoice_id, &payload_bytes, &signature);
+}
+
 #[test]
 fn test_create_invoice_with_verified_parties() {
     let (env, client, issuer, buyer, _, usdc) = setup();
@@ -333,6 +412,7 @@ fn test_list_for_financing() {
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
 
+    attest(&env, &client, &invoice_id);
     let result = client.list_for_financing(&invoice_id, &200);
     assert!(result);
 
@@ -347,6 +427,7 @@ fn test_list_fails_wrong_status() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
     client.list_for_financing(&invoice_id, &300);
 }
@@ -357,6 +438,7 @@ fn test_list_fails_discount_too_high() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &5001);
 }
 
@@ -368,6 +450,7 @@ fn test_list_for_financing_discount_bps_zero_panics() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &0);
 }
 
@@ -378,6 +461,7 @@ fn test_list_for_financing_discount_bps_min_boundary() {
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
 
+    attest(&env, &client, &invoice_id);
     let result = client.list_for_financing(&invoice_id, &1);
     assert!(result);
 
@@ -403,6 +487,7 @@ fn test_list_for_financing_discount_bps_max_boundary() {
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
 
+    attest(&env, &client, &invoice_id);
     let result = client.list_for_financing(&invoice_id, &5000);
     assert!(result);
 
@@ -430,6 +515,7 @@ fn test_list_for_financing_discount_bps_one_above_max_boundary_panics() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &5001);
 }
 
@@ -440,6 +526,7 @@ fn test_list_for_financing_non_issuer_panics() {
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &_buyer, &1_000_000_000, &due_date, &usdc);
     assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Created);
+    attest(&env, &client, &invoice_id);
 
     env.set_auths(&[]);
     client.list_for_financing(&invoice_id, &200);
@@ -452,6 +539,7 @@ fn test_full_lifecycle() {
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
     assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Created);
 
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
     assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Listed);
 
@@ -524,6 +612,7 @@ fn test_expire_listing_transitions_to_expired_after_window() {
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
 
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
     client.set_expiry_window(&100);
     env.ledger().set_timestamp(env.ledger().timestamp() + 101);
@@ -548,6 +637,7 @@ fn test_dual_confirmation_both_must_confirm() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     let pool = mock_pool_with_asset(&env, &usdc);
@@ -574,6 +664,7 @@ fn test_confirm_by_both_transitions_to_confirmed() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     let pool = mock_pool_with_asset(&env, &usdc);
@@ -596,6 +687,7 @@ fn test_confirm_delivery_wrong_party_panics() {
 
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     let pool = mock_pool_with_asset(&env, &usdc);
@@ -611,6 +703,7 @@ fn test_trigger_default_requires_past_due_date() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     let pool_id = mock_pool_with_asset(&env, &usdc);
@@ -649,6 +742,7 @@ fn test_trigger_default_from_listed_rejected() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
     assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Listed);
 
@@ -664,6 +758,7 @@ fn test_trigger_default_from_repaid_rejected() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     let pool_id = mock_pool_with_asset(&env, &usdc);
@@ -690,6 +785,7 @@ fn test_trigger_default_succeeds_at_exact_due_date() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     let pool_id = mock_pool_with_asset(&env, &usdc);
@@ -714,6 +810,7 @@ fn test_trigger_default_fails_before_due_date() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     let pool_id = mock_pool_with_asset(&env, &usdc);
@@ -815,6 +912,7 @@ fn test_get_by_status_filters_correctly() {
     let created = client.get_by_status(&InvoiceStatus::Created);
     assert_eq!(created.len(), 2);
 
+    attest(&env, &client, &id1);
     client.list_for_financing(&id1, &200);
     let created = client.get_by_status(&InvoiceStatus::Created);
     assert_eq!(created.len(), 1);
@@ -828,6 +926,7 @@ fn test_double_confirmation_panics() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     let pool = mock_pool_with_asset(&env, &usdc);
@@ -845,6 +944,7 @@ fn test_status_transitions_full_lifecycle() {
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
     assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Created);
 
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
     assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Listed);
 
@@ -867,6 +967,7 @@ fn test_mark_funded_fails_asset_mismatch() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     let xlm = Address::generate(&env);
@@ -880,6 +981,7 @@ fn test_mark_funded_succeeds_with_matching_asset() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     let pool = mock_pool_with_asset(&env, &usdc);
@@ -919,6 +1021,7 @@ fn test_expire_listing_succeeds_by_issuer() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     // Fast forward ledger time by 7 days + 1 second
@@ -935,6 +1038,7 @@ fn test_expire_listing_succeeds_by_admin() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     // Fast forward ledger time by 7 days + 1 second
@@ -952,6 +1056,7 @@ fn test_expire_listing_early_panics() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     // Fast forward ledger time by only 5 days (less than 7 days)
@@ -980,6 +1085,7 @@ fn test_expire_listing_configurable_window() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     // Set expiry window to 1 day (86400 seconds)
@@ -999,6 +1105,7 @@ fn test_expire_listing_exact_boundary() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     // Fast forward by exact expiry window (7 days)
@@ -1016,6 +1123,7 @@ fn test_expire_listing_one_second_before_boundary_panics() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     // Fast forward to 1 second before expiry window
@@ -1079,6 +1187,7 @@ fn test_mark_shipped_succeeds_by_issuer() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     let pool = mock_pool_with_asset(&env, &usdc);
@@ -1351,6 +1460,7 @@ fn test_repay_from_funded_succeeds() {
     let due_date = env.ledger().timestamp() + 86400;
     let face_value: u128 = 1_000_000_000;
     let invoice_id = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     let pool = mock_pool_with_asset(&env, &usdc);
@@ -1375,6 +1485,7 @@ fn test_repay_from_active_succeeds() {
     let due_date = env.ledger().timestamp() + 86400;
     let face_value: u128 = 1_000_000_000;
     let invoice_id = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     let pool = mock_pool_with_asset(&env, &usdc);
@@ -1400,6 +1511,7 @@ fn test_repay_from_confirmed_succeeds() {
     let due_date = env.ledger().timestamp() + 86400;
     let face_value: u128 = 1_000_000_000;
     let invoice_id = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     let pool = mock_pool_with_asset(&env, &usdc);
@@ -1427,6 +1539,7 @@ fn test_repay_emits_event() {
     let due_date = env.ledger().timestamp() + 86400;
     let face_value: u128 = 1_000_000_000;
     let invoice_id = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     let pool = mock_pool_with_asset(&env, &usdc);
@@ -1468,6 +1581,7 @@ fn test_repay_fails_from_listed() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
     // Status is Listed — repay should panic
     client.repay(&invoice_id);
@@ -1617,6 +1731,7 @@ fn prop_discount_bps_within_limit_always_lists_invoice() {
             let (env, client, issuer, buyer, _, usdc) = setup();
             let due_date = env.ledger().timestamp() + 86400;
             let id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+            attest(&env, &client, &id);
             let result = client.list_for_financing(&id, &discount_bps);
             prop_assert!(result);
             let inv = client.get(&id);
@@ -1659,6 +1774,7 @@ fn prop_expiry_window_bounds_are_respected_across_values() {
             prop_assert_eq!(client.get_expiry_window(), window);
             let due_date = env.ledger().timestamp() + window + 86_400;
             let id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+            attest(&env, &client, &id);
             client.list_for_financing(&id, &200);
             env.ledger()
                 .set_timestamp(env.ledger().timestamp() + window + 1);
@@ -1746,6 +1862,7 @@ fn test_repay_from_confirmed() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     let pool = mock_pool_with_asset(&env, &usdc);
@@ -1774,6 +1891,7 @@ fn test_repay_wrong_auth_panics() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     let pool = mock_pool_with_asset(&env, &usdc);
@@ -1805,6 +1923,7 @@ fn test_repay_from_listed_rejected() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
     assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Listed);
     client.repay(&invoice_id);
@@ -1816,6 +1935,7 @@ fn test_repay_from_repaid_rejected() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
     let pool = mock_pool_with_asset(&env, &usdc);
     client.set_pool_contract(&pool);
@@ -1836,6 +1956,7 @@ fn test_repay_from_defaulted_rejected() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
     let pool = mock_pool_with_asset(&env, &usdc);
     client.set_pool_contract(&pool);
@@ -1857,6 +1978,7 @@ fn test_repay_from_expired_rejected() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + 86400;
     let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &200);
 
     client.set_expiry_window(&100);
@@ -2167,6 +2289,7 @@ fn test_view_functions_initialized_existing_invoice() {
     let due_date = env.ledger().timestamp() + 86400;
 
     let invoice_id = client.create(&issuer, &buyer, &face_value, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
     client.list_for_financing(&invoice_id, &250);
 
     assert_eq!(client.get_issuer(&invoice_id), issuer);
