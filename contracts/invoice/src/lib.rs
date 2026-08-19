@@ -114,6 +114,36 @@ impl InvoiceContract {
         }
     }
 
+    /// Sets the escrow contract address used by this invoice contract.
+    ///
+    /// The escrow address is required so that `repay` and `repay_early` can
+    /// route buyer funds through escrow (buyer → escrow → pool) instead of
+    /// transferring directly to the pool, which would bypass escrow security.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `escrow_contract` - The escrow contract address.
+    ///
+    /// # Auth
+    /// Requires authorization from the stored admin address.
+    ///
+    /// # Panics
+    /// * `InvoiceError::NotFound` if the admin is not initialized.
+    ///
+    /// # Returns
+    /// * `()` - No value is returned.
+    pub fn set_escrow_contract(env: Env, escrow_contract: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .set(&DataKey::EscrowContract, &escrow_contract);
+    }
+
     pub fn add_supported_asset(env: Env, asset: Address) {
         let admin: Address = env
             .storage()
@@ -677,9 +707,27 @@ impl InvoiceContract {
 
         let buyer = invoice.buyer.clone();
 
-        let token = token::Client::new(&env, &funding_asset);
-        token.transfer(&buyer, &pool, &(face_value as i128));
+        // Route repayment through escrow so escrow remains the secure
+        // intermediary for all fund movements (fixes issue #59).
+        // Flow: buyer → escrow → pool (via escrow::release_to_pool)
+        let escrow: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::EscrowContract)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
 
+        let token = token::Client::new(&env, &funding_asset);
+        // Step 1: buyer transfers face_value into escrow
+        token.transfer(&buyer, &escrow, &(face_value as i128));
+
+        // Step 2: escrow releases face_value back to pool
+        let mut escrow_args = Vec::new(&env);
+        escrow_args.push_back(invoice_id.clone().into_val(&env));
+        escrow_args.push_back(face_value.into_val(&env));
+        let _: bool =
+            env.invoke_contract(&escrow, &Symbol::new(&env, "release_to_pool"), escrow_args);
+
+        // Step 3: notify pool to update its internal accounting
         let mut args = Vec::new(&env);
         args.push_back(invoice_id.clone().into_val(&env));
         args.push_back(face_value.into_val(&env));
@@ -747,9 +795,27 @@ impl InvoiceContract {
         let buyer = invoice.buyer.clone();
         let funding_asset = invoice.funding_asset.clone();
 
-        let token = token::Client::new(&env, &funding_asset);
-        token.transfer(&buyer, &pool, &(face_value as i128));
+        // Route repayment through escrow so escrow remains the secure
+        // intermediary for all fund movements (fixes issue #59).
+        // Flow: buyer → escrow → pool (via escrow::release_to_pool)
+        let escrow: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::EscrowContract)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
 
+        let token = token::Client::new(&env, &funding_asset);
+        // Step 1: buyer transfers face_value into escrow
+        token.transfer(&buyer, &escrow, &(face_value as i128));
+
+        // Step 2: escrow releases face_value back to pool
+        let mut escrow_args = Vec::new(&env);
+        escrow_args.push_back(invoice_id.clone().into_val(&env));
+        escrow_args.push_back(face_value.into_val(&env));
+        let _: bool =
+            env.invoke_contract(&escrow, &Symbol::new(&env, "release_to_pool"), escrow_args);
+
+        // Step 3: notify pool to update its internal accounting
         let mut args = Vec::new(&env);
         args.push_back(invoice_id.clone().into_val(&env));
         args.push_back(face_value.into_val(&env));
