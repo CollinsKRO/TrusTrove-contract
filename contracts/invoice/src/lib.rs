@@ -152,7 +152,10 @@ impl InvoiceContract {
             .get(&DataKey::Admin)
             .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
         admin.require_auth();
-        let old: Option<Address> = env.storage().instance().get(&DataKey::AgentRegistryContract);
+        let old: Option<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AgentRegistryContract);
         env.storage()
             .instance()
             .set(&DataKey::AgentRegistryContract, &agent_registry_contract);
@@ -534,7 +537,12 @@ impl InvoiceContract {
     /// ```ignore
     /// client.submit_attestation(&invoice_id, &payload, &signature);
     /// ```
-    pub fn submit_attestation(env: Env, invoice_id: BytesN<32>, payload: Bytes, signature: BytesN<65>) {
+    pub fn submit_attestation(
+        env: Env,
+        invoice_id: BytesN<32>,
+        payload: Bytes,
+        signature: BytesN<65>,
+    ) {
         // NO require_auth on the caller — submission is permissionless by
         // design. Security comes entirely from the signature check below,
         // not from who calls this.
@@ -585,7 +593,9 @@ impl InvoiceContract {
             evidence_hash: decoded.evidence_hash,
             submitted_at: env.ledger().timestamp(),
         };
-        env.storage().persistent().set(&attestation_key, &attestation);
+        env.storage()
+            .persistent()
+            .set(&attestation_key, &attestation);
         env.storage()
             .persistent()
             .extend_ttl(&attestation_key, TTL_THRESHOLD, TTL_EXTEND_TO);

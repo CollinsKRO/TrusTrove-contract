@@ -5,6 +5,7 @@ use soroban_sdk::{
     testutils::{
         storage::Instance as _, Address as _, Events as _, Ledger, MockAuth, MockAuthInvoke,
     },
+    xdr::ToXdr,
     Address, BytesN, Env, IntoVal, Symbol, TryFromVal,
 };
 
@@ -52,6 +53,78 @@ impl MockRegistry {
 
 #[contracttype]
 pub struct RegKey(Address);
+
+// --------------- Mock Agent Registry (Underwrite) ---------------
+//
+// Stands in for the agent-registry contract from the separate
+// `underwrite-contract` repo, so `create_and_list_with_params` can satisfy
+// invoice's `submit_attestation` gate with a real secp256k1 signature.
+
+#[contract]
+pub struct MockAgentRegistry;
+
+#[contractimpl]
+impl MockAgentRegistry {
+    pub fn get_agent(env: Env, agent_id: Symbol) -> Option<trusttrove_invoice::Agent> {
+        env.storage().persistent().get(&AgentKey(agent_id))
+    }
+
+    pub fn register_agent(env: Env, agent_id: Symbol, agent: trusttrove_invoice::Agent) {
+        env.storage().persistent().set(&AgentKey(agent_id), &agent);
+    }
+}
+
+#[contracttype]
+pub struct AgentKey(Symbol);
+
+const TEST_AGENT_SEED: [u8; 32] = [7u8; 32];
+
+fn test_agent_signing_key() -> k256::ecdsa::SigningKey {
+    k256::ecdsa::SigningKey::from_slice(&TEST_AGENT_SEED).unwrap()
+}
+
+fn test_agent_pubkey(env: &Env) -> BytesN<65> {
+    use k256::elliptic_curve::sec1::ToEncodedPoint;
+    let point = test_agent_signing_key()
+        .verifying_key()
+        .to_encoded_point(false);
+    let mut bytes = [0u8; 65];
+    bytes.copy_from_slice(point.as_bytes());
+    BytesN::from_array(env, &bytes)
+}
+
+fn test_agent_id(env: &Env) -> Symbol {
+    Symbol::new(env, "test_agent")
+}
+
+/// Submits a validly signed attestation for `invoice_id` against the
+/// agent-registry wired up in `setup()`, unlocking it for
+/// `list_for_financing`.
+fn attest_invoice(te: &TestEnv, invoice_id: &BytesN<32>) {
+    let payload = trusttrove_invoice::AttestationPayload {
+        domain_separator: BytesN::from_array(
+            &te.env,
+            &trusttrove_invoice::ATTESTATION_DOMAIN_SEPARATOR,
+        ),
+        invoice_id: invoice_id.clone(),
+        risk_score: 5000,
+        evidence_hash: BytesN::from_array(&te.env, &[9u8; 32]),
+        agent_id: test_agent_id(&te.env),
+        nonce: 1,
+    };
+    let payload_bytes = payload.to_xdr(&te.env);
+    let digest = te.env.crypto().keccak256(&payload_bytes).to_array();
+    let (sig, recid) = test_agent_signing_key()
+        .sign_prehash_recoverable(&digest)
+        .unwrap();
+    let mut sig_bytes = [0u8; 65];
+    sig_bytes[..64].copy_from_slice(&sig.to_bytes());
+    sig_bytes[64] = recid.to_byte();
+    let signature = BytesN::from_array(&te.env, &sig_bytes);
+
+    te.invoice
+        .submit_attestation(invoice_id, &payload_bytes, &signature);
+}
 
 // --------------- Mock Token ---------------
 
@@ -151,6 +224,17 @@ fn setup() -> TestEnv {
     invoice.set_pool_contract(&pool_id);
     invoice.set_escrow_contract(&escrow_id);
 
+    let agent_registry_id = env.register_contract(None, MockAgentRegistry);
+    let agent_registry = MockAgentRegistryClient::new(&env, &agent_registry_id);
+    agent_registry.register_agent(
+        &test_agent_id(&env),
+        &trusttrove_invoice::Agent {
+            active: true,
+            pubkey: test_agent_pubkey(&env),
+        },
+    );
+    invoice.set_agent_registry_contract(&agent_registry_id);
+
     // Raise cap to 100% so existing tests (which fund at 98% utilization) still pass
     pool.set_max_utilization(&admin, &10000);
 
@@ -182,6 +266,7 @@ fn create_and_list_with_params(
     let invoice_id =
         te.invoice
             .create(&te.issuer, &te.buyer, &face_value, &due_date, funding_asset);
+    attest_invoice(te, &invoice_id);
     te.invoice.list_for_financing(&invoice_id, &discount_bps);
     invoice_id
 }
