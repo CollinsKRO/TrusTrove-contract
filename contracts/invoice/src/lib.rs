@@ -1,8 +1,9 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, panic_with_error, token, xdr::ToXdr, Address, Bytes, BytesN, Env,
-    IntoVal, Map, String, Symbol, Vec,
+    contract, contractimpl, panic_with_error, token,
+    xdr::{FromXdr, ToXdr},
+    Address, Bytes, BytesN, Env, IntoVal, Map, String, Symbol, Vec,
 };
 
 mod constants;
@@ -30,6 +31,12 @@ pub const MAX_FACE_VALUE: u128 = u128::MAX / 10_000;
 /// far-future due dates that are effectively garbage data (e.g., centuries
 /// in the future). The value is ~10 years (10 * 365 * 24 * 60 * 60).
 pub const MAX_INVOICE_LIFETIME_SECONDS: u64 = 10 * 365 * 24 * 60 * 60;
+
+/// Fixed 32-byte domain separator that Underwrite agents must include in
+/// the [`AttestationPayload`] they sign. Binds a signature to this
+/// contract's attestation scheme specifically, so it can't be replayed
+/// against an unrelated contract or message format.
+pub const ATTESTATION_DOMAIN_SEPARATOR: [u8; 32] = *b"TrusTrove.InvoiceAttestation.v1_";
 
 #[contract]
 pub struct InvoiceContract;
@@ -111,6 +118,52 @@ impl InvoiceContract {
             events::pool_contract_updated(&env, &old, &pool_contract);
         } else {
             events::pool_contract_updated(&env, &pool_contract, &pool_contract);
+        }
+    }
+
+    /// Sets the agent-registry contract address used by `submit_attestation`
+    /// to look up an attesting agent's signing key.
+    ///
+    /// The agent-registry contract is deployed from the separate
+    /// `underwrite-contract` repo; its address is passed in here once it's
+    /// available (see `AGENT_REGISTRY_CONTRACT` in `.env.example`).
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `agent_registry_contract` - The deployed agent-registry contract address.
+    ///
+    /// # Auth
+    /// Requires authorization from the stored admin address.
+    ///
+    /// # Panics
+    /// * `InvoiceError::NotFound` if the admin is not initialized.
+    ///
+    /// # Returns
+    /// * `()` - No value is returned.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.set_agent_registry_contract(&agent_registry_address);
+    /// ```
+    pub fn set_agent_registry_contract(env: Env, agent_registry_contract: Address) {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
+        admin.require_auth();
+        let old: Option<Address> = env.storage().instance().get(&DataKey::AgentRegistryContract);
+        env.storage()
+            .instance()
+            .set(&DataKey::AgentRegistryContract, &agent_registry_contract);
+        if let Some(old) = old {
+            events::agent_registry_contract_updated(&env, &old, &agent_registry_contract);
+        } else {
+            events::agent_registry_contract_updated(
+                &env,
+                &agent_registry_contract,
+                &agent_registry_contract,
+            );
         }
     }
 
@@ -382,6 +435,8 @@ impl InvoiceContract {
     ///
     /// # Panics
     /// * `InvoiceError::NotFound` if the invoice does not exist.
+    /// * `InvoiceError::VerificationRequired` if no Underwrite agent attestation has
+    ///   been submitted for this invoice (see `submit_attestation`).
     /// * `InvoiceError::InvalidStatusTransition` if invoice status is not `Created`.
     /// * `InvoiceError::InvalidDiscount` if `discount_bps` is zero (a 0% discount is
     ///   nonsensical — the pool would fund at face value with zero yield).
@@ -401,6 +456,13 @@ impl InvoiceContract {
             .persistent()
             .get(&inv_key)
             .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
+        if !env
+            .storage()
+            .persistent()
+            .has(&DataKey::Attestation(invoice_id.clone()))
+        {
+            panic_with_error!(&env, InvoiceError::VerificationRequired);
+        }
         invoice.issuer.require_auth();
         if invoice.status != InvoiceStatus::Created {
             panic_with_error!(&env, InvoiceError::InvalidStatusTransition);
@@ -425,6 +487,111 @@ impl InvoiceContract {
         );
         events::invoice_listed(&env, &invoice_id, discount_bps);
         true
+    }
+
+    /// Submits a signed risk attestation from a registered Underwrite agent
+    /// against an invoice, unlocking it for `list_for_financing`.
+    ///
+    /// This is the hook by which TrusTrove calls into Underwrite's
+    /// agent-registry contract (a separate product, built in the
+    /// `underwrite-contract` repo) — this contract only verifies the
+    /// signature and checks the signer against that registry; it does not
+    /// implement any agent logic itself.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `invoice_id` - The invoice being attested.
+    /// * `payload` - XDR-encoded [`AttestationPayload`]: `domain_separator`,
+    ///   `invoice_id`, `risk_score`, `evidence_hash`, `agent_id`, `nonce`.
+    ///   This is exactly the byte string the agent signed.
+    /// * `signature` - A 65-byte recoverable secp256k1 signature over
+    ///   `keccak256(payload)`: 64 bytes of `r || s` followed by a 1-byte
+    ///   recovery id.
+    ///
+    /// # Auth
+    /// None from the caller — submission is deliberately permissionless.
+    /// Trust comes entirely from the signature recovering to an active
+    /// agent's registered pubkey, not from who relays the transaction.
+    ///
+    /// # Panics
+    /// * `InvoiceError::NotFound` if the invoice does not exist, or if the
+    ///   agent-registry contract has not been configured via
+    ///   `set_agent_registry_contract`.
+    /// * `InvoiceError::InvalidAmount` if `payload` fails to decode as an
+    ///   `AttestationPayload`, if its `domain_separator` doesn't match this
+    ///   contract's, or if its `invoice_id` doesn't match the `invoice_id`
+    ///   argument.
+    /// * `InvoiceError::UntrustedSigner` if the recovered signer is not an
+    ///   active agent in the agent-registry, or its registered pubkey
+    ///   doesn't match the recovered key.
+    /// * `InvoiceError::AlreadyAttested` if an attestation already exists
+    ///   for this invoice (replay guard — one attestation per invoice).
+    ///
+    /// # Returns
+    /// * `()` - No value is returned.
+    ///
+    /// # Example
+    /// ```ignore
+    /// client.submit_attestation(&invoice_id, &payload, &signature);
+    /// ```
+    pub fn submit_attestation(env: Env, invoice_id: BytesN<32>, payload: Bytes, signature: BytesN<65>) {
+        // NO require_auth on the caller — submission is permissionless by
+        // design. Security comes entirely from the signature check below,
+        // not from who calls this.
+        Self::get_invoice(&env, invoice_id.clone());
+
+        let attestation_key = DataKey::Attestation(invoice_id.clone());
+        if env.storage().persistent().has(&attestation_key) {
+            panic_with_error!(&env, InvoiceError::AlreadyAttested);
+        }
+
+        let decoded: AttestationPayload = AttestationPayload::from_xdr(&env, &payload)
+            .unwrap_or_else(|_| panic_with_error!(&env, InvoiceError::InvalidAmount));
+        if decoded.domain_separator != BytesN::from_array(&env, &ATTESTATION_DOMAIN_SEPARATOR) {
+            panic_with_error!(&env, InvoiceError::InvalidAmount);
+        }
+        if decoded.invoice_id != invoice_id {
+            panic_with_error!(&env, InvoiceError::InvalidAmount);
+        }
+
+        // Split the 65-byte recoverable signature into its 64-byte r||s
+        // component and 1-byte recovery id for `secp256k1_recover`.
+        let sig_bytes = signature.to_array();
+        let mut rs = [0u8; 64];
+        rs.copy_from_slice(&sig_bytes[0..64]);
+        let recovery_id = sig_bytes[64] as u32;
+        let sig_rs = BytesN::from_array(&env, &rs);
+
+        let hash = env.crypto().keccak256(&payload);
+        let recovered_pubkey = env.crypto().secp256k1_recover(&hash, &sig_rs, recovery_id);
+
+        let registry: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::AgentRegistryContract)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
+        let mut args = Vec::new(&env);
+        args.push_back(decoded.agent_id.clone().into_val(&env));
+        let agent: Option<Agent> =
+            env.invoke_contract(&registry, &Symbol::new(&env, "get_agent"), args);
+        match agent {
+            Some(agent) if agent.active && agent.pubkey == recovered_pubkey => {}
+            _ => panic_with_error!(&env, InvoiceError::UntrustedSigner),
+        }
+
+        let attestation = Attestation {
+            agent_id: decoded.agent_id.clone(),
+            risk_score: decoded.risk_score,
+            evidence_hash: decoded.evidence_hash,
+            submitted_at: env.ledger().timestamp(),
+        };
+        env.storage().persistent().set(&attestation_key, &attestation);
+        env.storage()
+            .persistent()
+            .extend_ttl(&attestation_key, TTL_THRESHOLD, TTL_EXTEND_TO);
+        Self::extend_instance_ttl(&env);
+
+        events::attestation_submitted(&env, &invoice_id, &decoded.agent_id, decoded.risk_score);
     }
 
     /// Marks a listed invoice as funded by a pool.
