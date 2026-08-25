@@ -65,7 +65,7 @@ Run any script from the repo root, e.g. `bash scripts/maintainer/create-contract
 
 ### registry_contract
 
-Tracks verified SME issuers and buyers. Every other contract calls `is_verified()` before allowing any action.
+Tracks verified SME issuers and buyers.
 
 ```
 initialize(admin)
@@ -75,6 +75,21 @@ is_verified(address) → bool
 get_profile(address) → Profile
 revoke(address) → bool
 ```
+
+**Revocation is prospective, not retroactive.** `is_verified()` is re-checked
+at every point where new business gets committed — `invoice.create()`,
+`invoice.list_for_financing()`, and `pool.fund_invoice()` — so a revoked
+issuer or buyer can't originate, list, or get funded on a new invoice. It is
+**not** re-checked at any later lifecycle step (`mark_shipped`,
+`confirm_delivery`, `repay`, `repay_early`, `trigger_default`): once an
+invoice is `Funded`, pool capital is already committed and the repayment
+terms are already fixed, so a later `revoke()` does not unwind, freeze, or
+force-default an in-flight invoice. This is a deliberate choice — unwinding
+committed capital on revocation would be disruptive to LPs and gameable
+(e.g. an issuer could grief the pool by getting itself revoked mid-term to
+force a default). Admins who need to stop a specific in-flight invoice have
+`invoice.trigger_default()` (past due date) as the existing mechanism; there
+is no separate "freeze this invoice" primitive.
 
 ### invoice_contract
 
@@ -117,7 +132,7 @@ USDC liquidity pool with share-based LP accounting. Share price grows as invoice
 ```
 deposit(lp, usdc_amount) → shares
 withdraw(lp, shares) → usdc_amount
-fund_invoice(invoice_id) → bool
+fund_invoice(invoice_id) → bool         ← re-verifies issuer & buyer against registry_contract
 receive_repayment(invoice_id, amount) → bool  ← invoice_contract only
 handle_default(invoice_id) → bool
 get_stats() → PoolStats
@@ -152,6 +167,11 @@ get_lp_position(address) → LPPosition
           │  (USDC custody)   │
           └───────────────────┘
 ```
+
+`pool_contract` also calls `registry_contract.is_verified()` directly
+(not shown above) as part of `fund_invoice`, re-checking the issuer and
+buyer before committing capital. See "Revocation is prospective, not
+retroactive" above.
 
 ### Invoice Lifecycle & Fund Movement
 

@@ -49,6 +49,15 @@ impl MockRegistry {
             .persistent()
             .extend_ttl(&RegKey(address), TTL_THRESHOLD, TTL_EXTEND_TO);
     }
+
+    pub fn revoke(env: Env, address: Address) {
+        env.storage()
+            .persistent()
+            .set(&RegKey(address.clone()), &false);
+        env.storage()
+            .persistent()
+            .extend_ttl(&RegKey(address), TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
 }
 
 #[contracttype]
@@ -156,8 +165,10 @@ struct TestEnv {
     pool: PoolContractClient<'static>,
     pool_id: Address,
     invoice: RealInvoiceClient<'static>,
+    registry: MockRegistryClient<'static>,
     usdc_id: Address,
     xlm_id: Address,
+    escrow_id: Address,
     admin: Address,
     issuer: Address,
     buyer: Address,
@@ -211,11 +222,11 @@ fn setup() -> TestEnv {
     let invoice = RealInvoiceClient::new(&env, &invoice_id);
     invoice.initialize(&admin, &registry_id);
 
-    let pool = PoolContractClient::new(&env, &pool_id);
-    pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id);
-
     let escrow = RealEscrowClient::new(&env, &escrow_id);
     escrow.initialize(&admin, &pool_id, &usdc_id);
+
+    let pool = PoolContractClient::new(&env, &pool_id);
+    pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id, &registry_id);
 
     invoice.add_supported_asset(&usdc_id);
     invoice.add_supported_asset(&xlm_id);
@@ -242,8 +253,10 @@ fn setup() -> TestEnv {
         pool,
         pool_id,
         invoice,
+        registry,
         usdc_id,
         xlm_id,
+        escrow_id,
         admin,
         issuer,
         buyer,
@@ -600,6 +613,89 @@ fn test_fund_invoice_fails_asset_mismatch() {
     te.pool.fund_invoice(&invoice_id);
 }
 
+// ============== REGISTRY REVOCATION RE-CHECK (registry+invoice+pool bug) ==============
+//
+// Design decision: registry revocation is prospective, not retroactive.
+// `list_for_financing` and `fund_invoice` are the two points where new
+// business is committed (an issuer lists, then the pool commits capital),
+// so both re-verify the issuer and buyer against the registry. Once an
+// invoice is actually Funded, its lifecycle (mark_shipped, confirm_delivery,
+// repay, repay_early, trigger_default) proceeds regardless of any later
+// revocation — the pool's capital is already committed and the repayment
+// terms are already fixed, so unwinding an in-flight invoice on revocation
+// would be disruptive and gameable (e.g. an issuer griefing LPs by getting
+// itself revoked mid-term). See `test_revocation_after_funding_does_not_block_lifecycle`
+// below for the documented in-flight behavior.
+
+#[test]
+#[should_panic(expected = "Error(Contract, #18)")]
+fn test_fund_invoice_fails_when_issuer_revoked_after_listing() {
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+
+    // Issuer was verified at create()/list_for_financing() time but is
+    // revoked before the pool commits capital.
+    te.registry.revoke(&te.issuer);
+
+    te.pool.fund_invoice(&invoice_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #19)")]
+fn test_fund_invoice_fails_when_buyer_revoked_after_listing() {
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+
+    te.registry.revoke(&te.buyer);
+
+    te.pool.fund_invoice(&invoice_id);
+}
+
+#[test]
+fn test_revocation_after_funding_does_not_block_lifecycle() {
+    // Mid-lifecycle revocation (post-Funded) must NOT retroactively affect
+    // an in-flight invoice: shipment, delivery confirmation, and repayment
+    // all proceed exactly as if the issuer/buyer were still verified. This
+    // is the documented, deliberate behavior — revocation only gates new
+    // commitments (list_for_financing, fund_invoice), not invoices already
+    // funded.
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+
+    let result = te.pool.fund_invoice(&invoice_id);
+    assert!(
+        result,
+        "funding must succeed while both parties are verified"
+    );
+
+    // Revoke both issuer and buyer only after the pool has already
+    // committed capital.
+    te.registry.revoke(&te.issuer);
+    te.registry.revoke(&te.buyer);
+    assert!(!te.registry.is_verified(&te.issuer));
+    assert!(!te.registry.is_verified(&te.buyer));
+
+    // The rest of the lifecycle is unaffected by the revocation.
+    assert!(te.invoice.mark_shipped(&invoice_id));
+    assert!(te.invoice.confirm_delivery(&invoice_id, &te.issuer));
+    assert!(te.invoice.confirm_delivery(&invoice_id, &te.buyer));
+
+    te.env
+        .ledger()
+        .set_timestamp(te.env.ledger().timestamp() + 86401);
+    assert!(te.invoice.repay(&invoice_id));
+
+    let invoice = te.invoice.get(&invoice_id);
+    assert_eq!(invoice.status, trusttrove_invoice::InvoiceStatus::Repaid);
+
+    let stats = te.pool.get_stats();
+    assert_eq!(stats.active_invoice_count, 0);
+    assert_eq!(stats.total_funded, 0);
+}
+
 // ============== ISSUE #275: FUND INVOICE EDGE CASES ==============
 
 #[test]
@@ -812,9 +908,9 @@ fn test_default_max_utilization_in_stats() {
     let usdc_id = env.register_contract(None, MockToken);
     RealInvoiceClient::new(&env, &invoice_id).initialize(&admin, &registry_id);
     let pool_id = env.register_contract(None, PoolContract);
-    let pool = PoolContractClient::new(&env, &pool_id);
-    pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id);
     RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &usdc_id);
+    let pool = PoolContractClient::new(&env, &pool_id);
+    pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id, &registry_id);
     let stats = pool.get_stats();
     assert_eq!(stats.max_utilization_bps, 8500);
 }
@@ -1092,6 +1188,57 @@ fn test_receive_repayment_panics_when_amount_below_funded() {
     te.pool.receive_repayment(&invoice_id, &1_000_000_000);
 }
 
+// pool.receive_repayment_with_refund trusts whatever discount/refund split
+// invoice_contract passes in: pool has no visibility into funded_at/due_date
+// and never checks that `refund` is proportional to elapsed time. It only
+// bounds `refund` to [0, amount - funded_amount]. This test demonstrates
+// that behavior directly: called immediately after funding (elapsed = 0,
+// so a time-proportional split would refund ~the full discount to the
+// buyer and credit the pool ~nothing), an artificially inconsistent split
+// that instead credits the pool the *entire* discount as yield (refund = 0)
+// is accepted unconditionally, purely because it falls within the amount
+// bound. Reconciling this split against invoice's actual elapsed/term is
+// invoice_contract's responsibility, not pool's — see the "Trust boundary"
+// note on `receive_repayment_with_refund`'s rustdoc.
+#[test]
+fn test_receive_repayment_with_refund_accepts_time_inconsistent_split() {
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+    te.pool.fund_invoice(&invoice_id);
+
+    // No time has elapsed since funding — due_date is still a full 86400s
+    // away and `term` has barely started. A time-proportional split would
+    // refund nearly the entire discount to the buyer. Instead, pass a split
+    // that hands the pool the entire discount immediately (refund = 0).
+    let full_repayment = DEFAULT_FACE_VALUE;
+    let inconsistent_refund = 0u128;
+
+    let before = te.pool.get_stats();
+    let buyer_usdc_before = MockTokenClient::new(&te.env, &te.usdc_id).balance(&te.buyer);
+
+    let result = te.pool.receive_repayment_with_refund(
+        &invoice_id,
+        &full_repayment,
+        &inconsistent_refund,
+        &te.buyer,
+    );
+    assert!(result);
+
+    // Pool accepted the split unconditionally: the full discount (which a
+    // time-proportional split would have mostly refunded to the buyer at
+    // elapsed = 0) was instead distributed as LP yield, and the buyer
+    // received no refund at all. Pool performed no elapsed/term check.
+    let after = te.pool.get_stats();
+    assert_eq!(
+        after.total_yield_distributed,
+        before.total_yield_distributed + DEFAULT_YIELD_AMOUNT
+    );
+    assert_eq!(after.total_funded, 0);
+    let buyer_usdc_after = MockTokenClient::new(&te.env, &te.usdc_id).balance(&te.buyer);
+    assert_eq!(buyer_usdc_after, buyer_usdc_before);
+}
+
 // Mismatched repayment (active_count already zero) must NOT silently underflow the
 // counter to u32::MAX — the contract panics with #17 (ActiveCountUnderflow) instead.
 // Otherwise every subsequent `get_stats()` / utilization read is corrupted.
@@ -1182,6 +1329,24 @@ fn test_handle_default_active_count_underflow_panics() {
             .instance()
             .set(&DataKey::ActiveInvoiceCount, &0u32);
     });
+
+    // Give escrow a matching lock record so escrow.handle_default() actually
+    // releases funds (returns true) and execution reaches the pool-side
+    // active-count underflow this test targets, rather than tripping the
+    // EscrowDefaultNotReleased guard first.
+    te.env.as_contract(&te.escrow_id, || {
+        te.env.storage().persistent().set(
+            &trusttrove_escrow::DataKey::Locked(phantom_id.clone()),
+            &trusttrove_escrow::EscrowRecord {
+                invoice_id: phantom_id.clone(),
+                amount: funded_amount,
+                locked_at: te.env.ledger().timestamp(),
+            },
+        );
+    });
+    te.env
+        .ledger()
+        .set_timestamp(te.env.ledger().timestamp() + 60);
 
     te.pool.handle_default(&phantom_id);
 }
@@ -1314,6 +1479,50 @@ fn test_handle_default_rejects_double_default() {
     // Second call should panic with InvoiceNotFound since the funded key was removed
     let res = te.pool.try_handle_default(&invoice_id);
     assert!(res.is_err());
+}
+
+// If escrow's lock record for an invoice is already gone by the time
+// pool.handle_default runs (e.g. released out of band via release_to_pool),
+// escrow.handle_default() returns false without transferring any tokens.
+// Pool must not proceed with loss accounting in that case — see
+// EscrowDefaultNotReleased (#21).
+#[test]
+fn test_handle_default_rejects_when_escrow_reports_no_release() {
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+    te.pool.fund_invoice(&invoice_id);
+    te.env
+        .ledger()
+        .set_timestamp(te.env.ledger().timestamp() + 60);
+
+    // Simulate escrow's lock record having already been removed out of band,
+    // so escrow.handle_default() hits its `return false` path instead of
+    // transferring funds.
+    let locked_key = trusttrove_escrow::DataKey::Locked(invoice_id.clone());
+    te.env.as_contract(&te.escrow_id, || {
+        te.env.storage().persistent().remove(&locked_key);
+    });
+
+    let before = te.pool.get_stats();
+
+    let res = te.pool.try_handle_default(&invoice_id);
+    assert!(res.is_err());
+
+    // Pool accounting must be untouched: escrow released nothing, so no loss
+    // should be realised, funded/deposit totals must be unchanged, and the
+    // funded invoice entry must still exist.
+    let after = te.pool.get_stats();
+    assert_eq!(after.total_deposits, before.total_deposits);
+    assert_eq!(after.total_funded, before.total_funded);
+    assert_eq!(after.total_loss_realised, before.total_loss_realised);
+    assert_eq!(after.active_invoice_count, before.active_invoice_count);
+
+    let funded_key = DataKey::FundedInvoice(invoice_id.clone());
+    let still_funded = te.env.as_contract(&te.pool_id, || {
+        te.env.storage().persistent().has(&funded_key)
+    });
+    assert!(still_funded);
 }
 
 #[test]
@@ -1806,8 +2015,8 @@ fn test_initialize_accepts_distinct_addresses() {
 }
 
 // Every pairwise collision among (admin, invoice_contract, escrow_contract,
-// usdc_asset) must be rejected with InvalidConfiguration (#15) so the
-// handle_default gate can never collide with the admin path.
+// usdc_asset, registry_contract) must be rejected with InvalidConfiguration
+// (#15) so the handle_default gate can never collide with the admin path.
 #[test]
 fn test_initialize_rejects_each_pairwise_address_collision() {
     let env = Env::default();
@@ -1818,16 +2027,28 @@ fn test_initialize_rejects_each_pairwise_address_collision() {
         Address::generate(&env), // invoice_contract
         Address::generate(&env), // escrow_contract
         Address::generate(&env), // usdc_asset
+        Address::generate(&env), // registry_contract
     ];
 
-    let pairs = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)];
+    let pairs = [
+        (0, 1),
+        (0, 2),
+        (0, 3),
+        (0, 4),
+        (1, 2),
+        (1, 3),
+        (1, 4),
+        (2, 3),
+        (2, 4),
+        (3, 4),
+    ];
     for (i, j) in pairs {
         let mut addrs = base.clone();
         addrs[j] = addrs[i].clone();
 
         let pool_id = env.register_contract(None, PoolContract);
         let pool = PoolContractClient::new(&env, &pool_id);
-        let res = pool.try_initialize(&addrs[0], &addrs[1], &addrs[2], &addrs[3]);
+        let res = pool.try_initialize(&addrs[0], &addrs[1], &addrs[2], &addrs[3], &addrs[4]);
         assert!(
             res.is_err(),
             "collision between initialize() params {i} and {j} should be rejected"
@@ -1901,6 +2122,7 @@ fn test_deposit_extends_instance_ttl_when_below_threshold() {
     RealInvoiceClient::new(&env, &invoice_id).initialize(&admin, &registry_id);
 
     let pool_id = env.register_contract(None, PoolContract);
+    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &usdc_id);
 
     // Before initialize: TTL is the default of ~4096 ledgers.
     let ttl_before = env.as_contract(&pool_id, || env.storage().instance().get_ttl());
@@ -1910,7 +2132,7 @@ fn test_deposit_extends_instance_ttl_when_below_threshold() {
     );
 
     let pool = PoolContractClient::new(&env, &pool_id);
-    pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id);
+    pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id, &registry_id);
 
     // After initialize: TTL should be bumped to ~TTL_EXTEND_TO.
     let ttl_after = env.as_contract(&pool_id, || env.storage().instance().get_ttl());
@@ -1970,12 +2192,13 @@ fn test_double_initialize_panics() {
                 invoice_id.clone(),
                 escrow_id.clone(),
                 usdc_id.clone(),
+                registry_id.clone(),
             )
                 .into_val(&env),
             sub_invokes: &[],
         },
     }]);
-    pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id);
+    pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id, &registry_id);
 
     // Verify storage state after first initialize
     env.as_contract(&pool_id, || {
@@ -1998,7 +2221,7 @@ fn test_double_initialize_panics() {
     });
 
     // Second initialize — panics with AlreadyInitialized (#1)
-    pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id);
+    pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id, &registry_id);
 }
 
 #[test]
