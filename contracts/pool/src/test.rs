@@ -1436,9 +1436,9 @@ fn test_trigger_default_reverts_when_escrow_grace_period_not_elapsed() {
     // period, and funding happens immediately after listing in this test).
     let due_date = te.env.ledger().timestamp() + 30;
     let face_value: u128 = 10_000_000_000;
-    let invoice_id =
-        te.invoice
-            .create(&te.issuer, &te.buyer, &face_value, &due_date, &te.usdc_id);
+    let invoice_id = te
+        .invoice
+        .create(&te.issuer, &te.buyer, &face_value, &due_date, &te.usdc_id);
     attest_invoice(&te, &invoice_id);
     te.invoice.list_for_financing(&invoice_id, &200);
     te.pool.fund_invoice(&invoice_id);

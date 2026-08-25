@@ -396,9 +396,7 @@ fn test_release_to_pool_requires_invoice_contract_auth() {
     client.release_to_pool(&invoice_id, &amount);
 
     let auths = env.auths();
-    assert!(auths
-        .iter()
-        .any(|(addr, _)| *addr == invoice_contract));
+    assert!(auths.iter().any(|(addr, _)| *addr == invoice_contract));
 }
 
 #[test]

@@ -39,35 +39,45 @@
                   "map": [
                     {
                       "key": {
-                        "string": "_YZqe_IC"
+                        "string": "C0Lpc8"
                       },
                       "val": {
-                        "string": "6_"
+                        "string": "7OUDKwlE"
+                      }
+                    },
+                    {
+                      "key": {
+                        "string": "__1_"
+                      },
+                      "val": {
+                        "string": "Yd"
+                      }
+                    },
+                    {
+                      "key": {
+                        "string": "b9_p0YvH_5"
+                      },
+                      "val": {
+                        "string": "_Ypoc68__T9Iv9WB_bI"
+                      }
+                    },
+                    {
+                      "key": {
+                        "string": "ko"
+                      },
+                      "val": {
+                        "string": "S2"
+                      }
+                    },
+                    {
+                      "key": {
+                        "string": "n"
+                      },
+                      "val": {
+                        "string": "d3Bf_Y_99___8I"
                       }
                     }
                   ]
-                }
-              ]
-            }
-          },
-          "sub_invocations": []
-        }
-      ]
-    ],
-    [
-      [
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-        {
-          "function": {
-            "contract_fn": {
-              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-              "function_name": "verify_profile",
-              "args": [
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                },
-                {
-                  "bool": true
                 }
               ]
             }
@@ -175,10 +185,42 @@
                         "map": [
                           {
                             "key": {
-                              "string": "_YZqe_IC"
+                              "string": "C0Lpc8"
                             },
                             "val": {
-                              "string": "6_"
+                              "string": "7OUDKwlE"
+                            }
+                          },
+                          {
+                            "key": {
+                              "string": "__1_"
+                            },
+                            "val": {
+                              "string": "Yd"
+                            }
+                          },
+                          {
+                            "key": {
+                              "string": "b9_p0YvH_5"
+                            },
+                            "val": {
+                              "string": "_Ypoc68__T9Iv9WB_bI"
+                            }
+                          },
+                          {
+                            "key": {
+                              "string": "ko"
+                            },
+                            "val": {
+                              "string": "S2"
+                            }
+                          },
+                          {
+                            "key": {
+                              "string": "n"
+                            },
+                            "val": {
+                              "string": "d3Bf_Y_99___8I"
                             }
                           }
                         ]
@@ -309,39 +351,6 @@
                 "key": {
                   "ledger_key_nonce": {
                     "nonce": 1033654523790656264
-                  }
-                },
-                "durability": "temporary",
-                "val": "void"
-              }
-            },
-            "ext": "v0"
-          },
-          6311999
-        ]
-      ],
-      [
-        {
-          "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-            "key": {
-              "ledger_key_nonce": {
-                "nonce": 2032731177588607455
-              }
-            },
-            "durability": "temporary"
-          }
-        },
-        [
-          {
-            "last_modified_ledger_seq": 0,
-            "data": {
-              "contract_data": {
-                "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-                "key": {
-                  "ledger_key_nonce": {
-                    "nonce": 2032731177588607455
                   }
                 },
                 "durability": "temporary",
@@ -538,10 +547,42 @@
                   "map": [
                     {
                       "key": {
-                        "string": "_YZqe_IC"
+                        "string": "C0Lpc8"
                       },
                       "val": {
-                        "string": "6_"
+                        "string": "7OUDKwlE"
+                      }
+                    },
+                    {
+                      "key": {
+                        "string": "__1_"
+                      },
+                      "val": {
+                        "string": "Yd"
+                      }
+                    },
+                    {
+                      "key": {
+                        "string": "b9_p0YvH_5"
+                      },
+                      "val": {
+                        "string": "_Ypoc68__T9Iv9WB_bI"
+                      }
+                    },
+                    {
+                      "key": {
+                        "string": "ko"
+                      },
+                      "val": {
+                        "string": "S2"
+                      }
+                    },
+                    {
+                      "key": {
+                        "string": "n"
+                      },
+                      "val": {
+                        "string": "d3Bf_Y_99___8I"
                       }
                     }
                   ]
@@ -587,85 +628,6 @@
               },
               {
                 "symbol": "register_buyer"
-              }
-            ],
-            "data": {
-              "bool": true
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": null,
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "fn_call"
-              },
-              {
-                "bytes": "0000000000000000000000000000000000000000000000000000000000000001"
-              },
-              {
-                "symbol": "verify_profile"
-              }
-            ],
-            "data": {
-              "vec": [
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-                },
-                {
-                  "bool": true
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
-        "type_": "contract",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "profile_verified"
-              },
-              {
-                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
-              }
-            ],
-            "data": {
-              "bool": true
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000001",
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "fn_return"
-              },
-              {
-                "symbol": "verify_profile"
               }
             ],
             "data": {
