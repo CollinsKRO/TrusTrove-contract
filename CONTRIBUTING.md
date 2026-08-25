@@ -83,6 +83,24 @@ cargo tarpaulin --workspace --engine llvm --out html --output-dir coverage
 Open `coverage/tarpaulin-report.html` to see which lines are uncovered. The same
 report is published as the `coverage-report` artifact on every CI run.
 
+## RUSTSEC advisory exceptions
+
+CI runs `cargo audit` against `audit.toml` in the repo root. If a RUSTSEC
+advisory affects a transitive dependency and has no available fix, do not
+disable or skip the audit step. Instead add a time-boxed, justified entry to
+`audit.toml`:
+
+```toml
+[advisories]
+ignore = [
+    "RUSTSEC-2024-0000", # <why no fix exists> — revisit by <YYYY-MM-DD>
+]
+```
+
+Each entry must include the advisory ID, a one-line reason there is no fix
+available yet, and a revisit date no more than 90 days out. Remove the entry
+as soon as a fixed version of the dependency is available.
+
 ## Commit changes
 
 Use the conventional format already shown in the README:
