@@ -1032,34 +1032,35 @@ fn build_metadata(
     metadata
 }
 
-fn metadata_entries() -> impl Strategy<Value = std::vec::Vec<(std::string::String, std::string::String)>> {
-    prop::collection::vec(
-        ("[a-zA-Z_][a-zA-Z0-9_]{0,9}", "[a-zA-Z0-9_]{1,20}"),
-        0..=5,
-    )
+fn metadata_entries(
+) -> impl Strategy<Value = std::vec::Vec<(std::string::String, std::string::String)>> {
+    prop::collection::vec(("[a-zA-Z_][a-zA-Z0-9_]{0,9}", "[a-zA-Z0-9_]{1,20}"), 0..=5)
 }
 
 #[test]
 fn prop_is_verified_always_consistent_with_get_verification_status_after_register() {
     let mut runner = TestRunner::new(ProptestConfig::with_cases(10));
     runner
-        .run(&(any::<bool>(), metadata_entries()), |(is_buyer, entries)| {
-            let (env, client) = setup();
-            let admin = Address::generate(&env);
-            client.initialize(&admin);
-            let address = Address::generate(&env);
-            let metadata = build_metadata(&env, &entries);
-            if is_buyer {
-                client.register_buyer(&address, &metadata);
-            } else {
-                client.register_issuer(&address, &metadata);
-            }
-            let verified = client.is_verified(&address);
-            let status = client.get_verification_status(&address);
-            prop_assert!(!verified);
-            prop_assert_eq!(status, VerificationStatus::Pending);
-            Ok(())
-        })
+        .run(
+            &(any::<bool>(), metadata_entries()),
+            |(is_buyer, entries)| {
+                let (env, client) = setup();
+                let admin = Address::generate(&env);
+                client.initialize(&admin);
+                let address = Address::generate(&env);
+                let metadata = build_metadata(&env, &entries);
+                if is_buyer {
+                    client.register_buyer(&address, &metadata);
+                } else {
+                    client.register_issuer(&address, &metadata);
+                }
+                let verified = client.is_verified(&address);
+                let status = client.get_verification_status(&address);
+                prop_assert!(!verified);
+                prop_assert_eq!(status, VerificationStatus::Pending);
+                Ok(())
+            },
+        )
         .unwrap();
 }
 
