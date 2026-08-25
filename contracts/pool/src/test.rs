@@ -2288,8 +2288,10 @@ fn test_withdraw_before_initialize_panics() {
 // production code rather than the mock. Refs: issue #631.
 mod real_registry_integration {
     use super::*;
-    use soroban_sdk::{map, String};
-    use trusttrove_registry::{RegistryContract as RealRegistry, RegistryContractClient as RealRegistryClient};
+    use soroban_sdk::{map, Map, String};
+    use trusttrove_registry::{
+        RegistryContract as RealRegistry, RegistryContractClient as RealRegistryClient,
+    };
 
     #[test]
     fn test_full_lifecycle_with_real_registry() {
@@ -2306,7 +2308,10 @@ mod real_registry_integration {
         let registry = RealRegistryClient::new(&env, &registry_id);
         registry.initialize(&admin);
 
-        let metadata: Map<String, String> = map![&env, (String::from_str(&env, "name"), String::from_str(&env, "test"))];
+        let metadata: Map<String, String> = map![
+            &env,
+            (String::from_str(&env, "name"), String::from_str(&env, "test"))
+        ];
         registry.register_issuer(&issuer, &metadata);
         registry.register_buyer(&buyer, &metadata);
 
@@ -2345,12 +2350,29 @@ mod real_registry_integration {
         escrow.initialize(&admin, &pool_id, &usdc_id);
 
         let pool = PoolContractClient::new(&env, &pool_id);
-        pool.initialize(&admin, &invoice_id_addr, &escrow_id, &usdc_id, &registry_id);
+        pool.initialize(
+            &admin,
+            &invoice_id_addr,
+            &escrow_id,
+            &usdc_id,
+            &registry_id,
+        );
 
         invoice.add_supported_asset(&usdc_id);
         invoice.set_pool_contract(&pool_id);
         invoice.set_escrow_contract(&escrow_id);
         pool.set_max_utilization(&admin, &10000);
+
+        let agent_registry_id = env.register_contract(None, MockAgentRegistry);
+        let agent_registry = MockAgentRegistryClient::new(&env, &agent_registry_id);
+        agent_registry.register_agent(
+            &test_agent_id(&env),
+            &trusttrove_invoice::Agent {
+                active: true,
+                pubkey: test_agent_pubkey(&env),
+            },
+        );
+        invoice.set_agent_registry_contract(&agent_registry_id);
 
         // --- Drive the full lifecycle: create -> list -> fund -> repay ---
         let face_value: u128 = 10_000_000_000;
@@ -2360,6 +2382,29 @@ mod real_registry_integration {
         pool.deposit(&lp, &face_value);
 
         let invoice_id = invoice.create(&issuer, &buyer, &face_value, &due_date, &usdc_id);
+
+        let payload = trusttrove_invoice::AttestationPayload {
+            domain_separator: BytesN::from_array(
+                &env,
+                &trusttrove_invoice::ATTESTATION_DOMAIN_SEPARATOR,
+            ),
+            invoice_id: invoice_id.clone(),
+            risk_score: 5000,
+            evidence_hash: BytesN::from_array(&env, &[9u8; 32]),
+            agent_id: test_agent_id(&env),
+            nonce: 1,
+        };
+        let payload_bytes = payload.to_xdr(&env);
+        let digest = env.crypto().keccak256(&payload_bytes).to_array();
+        let (sig, recid) = test_agent_signing_key()
+            .sign_prehash_recoverable(&digest)
+            .unwrap();
+        let mut sig_bytes = [0u8; 65];
+        sig_bytes[..64].copy_from_slice(&sig.to_bytes());
+        sig_bytes[64] = recid.to_byte();
+        let signature = BytesN::from_array(&env, &sig_bytes);
+        invoice.submit_attestation(&invoice_id, &payload_bytes, &signature);
+
         invoice.list_for_financing(&invoice_id, &discount_bps);
 
         let funded = pool.fund_invoice(&invoice_id);
