@@ -82,4 +82,9 @@ pub enum DataKey {
     LPInitialDeposit(Address),
     FundedInvoice(BytesN<32>),
     MaxUtilizationBps,
+    // RegistryContract intentionally last to avoid changing enum discriminants
+    // for already-deployed contract storage keys. New variants must keep
+    // being appended after it, in the same spirit, rather than inserted
+    // earlier.
+    RegistryContract,
 }

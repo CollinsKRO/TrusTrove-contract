@@ -41,6 +41,15 @@ impl MockRegistry {
             .persistent()
             .extend_ttl(&DataKey(address), TTL_THRESHOLD, TTL_EXTEND_TO);
     }
+
+    pub fn revoke(env: Env, address: Address) {
+        env.storage()
+            .persistent()
+            .set(&DataKey(address.clone()), &false);
+        env.storage()
+            .persistent()
+            .extend_ttl(&DataKey(address), TTL_THRESHOLD, TTL_EXTEND_TO);
+    }
 }
 
 #[contracttype]
@@ -428,6 +437,78 @@ fn test_list_for_financing() {
     let invoice = client.get(&invoice_id);
     assert_eq!(invoice.status, InvoiceStatus::Listed);
     assert_eq!(invoice.discount_bps, DEFAULT_DISCOUNT_BPS);
+}
+
+// ============== REGISTRY REVOCATION RE-CHECK (registry+invoice+pool bug) ==============
+//
+// Design decision: registry revocation is prospective, not retroactive.
+// `list_for_financing` re-verifies the issuer and buyer, since this is
+// still a pre-funding step where declining new business is cheap. Once an
+// invoice is `Funded`, however, verification is no longer re-checked at any
+// later step — see `test_revocation_after_mark_funded_does_not_block_lifecycle`.
+
+#[test]
+#[should_panic(expected = "Error(Contract, #4)")]
+fn test_list_for_financing_fails_when_issuer_revoked() {
+    let (env, client, issuer, buyer, registry, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
+
+    // Verified at create() time, revoked before listing.
+    registry.revoke(&issuer);
+
+    client.list_for_financing(&invoice_id, &200);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #5)")]
+fn test_list_for_financing_fails_when_buyer_revoked() {
+    let (env, client, issuer, buyer, registry, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
+
+    registry.revoke(&buyer);
+
+    client.list_for_financing(&invoice_id, &200);
+}
+
+// Mid-lifecycle revocation (post-`mark_funded`) must NOT retroactively
+// affect an in-flight invoice: shipment, dual confirmation, and default all
+// proceed exactly as if the issuer/buyer were still verified. This pins the
+// documented, deliberate behavior that revocation only gates new
+// commitments (`list_for_financing`, `PoolContract::fund_invoice`), not
+// invoices that already cleared those gates.
+#[test]
+fn test_revocation_after_mark_funded_does_not_block_lifecycle() {
+    let (env, client, issuer, buyer, registry, usdc) = setup();
+    let due_date = env.ledger().timestamp() + 86400;
+    let invoice_id = client.create(&issuer, &buyer, &1_000_000_000, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
+    client.list_for_financing(&invoice_id, &200);
+
+    let pool_id = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool_id);
+    client.mark_funded(&invoice_id, &pool_id, &usdc, &980_000_000);
+
+    // Revoke both parties only after the invoice is already Funded.
+    registry.revoke(&issuer);
+    registry.revoke(&buyer);
+    assert!(!registry.is_verified(&issuer));
+    assert!(!registry.is_verified(&buyer));
+
+    // The rest of the lifecycle proceeds unaffected.
+    assert!(client.mark_shipped(&invoice_id));
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Active);
+
+    client.confirm_delivery(&invoice_id, &issuer);
+    client.confirm_delivery(&invoice_id, &buyer);
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Confirmed);
+
+    env.ledger().set_timestamp(due_date + 1);
+    assert!(client.trigger_default(&invoice_id));
+    assert_eq!(client.get(&invoice_id).status, InvoiceStatus::Defaulted);
 }
 
 #[test]

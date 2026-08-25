@@ -436,11 +436,27 @@ impl InvoiceContract {
     /// # Auth
     /// Requires authorization from the invoice's issuer.
     ///
+    /// # Registry re-verification
+    /// Registry verification is re-checked here in addition to `create()`.
+    /// This is the last point before pool capital can be committed to the
+    /// invoice, so a revocation that happened after `create()` but before
+    /// listing must still block it. Verification is deliberately **not**
+    /// re-checked at any later lifecycle step (`mark_shipped`,
+    /// `confirm_delivery`, `repay`, `repay_early`, `trigger_default`):
+    /// once an invoice is funded, pool liquidity is already committed and
+    /// repayment terms are already fixed, so a later revocation does not
+    /// retroactively unwind or default an in-flight invoice. See
+    /// `PoolContract::fund_invoice` for the other re-check point.
+    ///
     /// # Panics
     /// * `InvoiceError::NotFound` if the invoice does not exist.
     /// * `InvoiceError::VerificationRequired` if no Underwrite agent attestation has
     ///   been submitted for this invoice (see `submit_attestation`).
     /// * `InvoiceError::InvalidStatusTransition` if invoice status is not `Created`.
+    /// * `InvoiceError::IssuerNotVerified` if the issuer's registry verification
+    ///   has since been revoked.
+    /// * `InvoiceError::BuyerNotVerified` if the buyer's registry verification
+    ///   has since been revoked.
     /// * `InvoiceError::InvalidDiscount` if `discount_bps` is zero (a 0% discount is
     ///   nonsensical — the pool would fund at face value with zero yield).
     /// * `InvoiceError::DiscountTooHigh` if `discount_bps` is greater than 5000.
@@ -470,6 +486,24 @@ impl InvoiceContract {
         if invoice.status != InvoiceStatus::Created {
             panic_with_error!(&env, InvoiceError::InvalidStatusTransition);
         }
+
+        let registry_id: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::RegistryContract)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
+        require_verified(
+            &env,
+            &registry_id,
+            &invoice.issuer,
+            InvoiceError::IssuerNotVerified,
+        );
+        require_verified(
+            &env,
+            &registry_id,
+            &invoice.buyer,
+            InvoiceError::BuyerNotVerified,
+        );
         if discount_bps == 0 {
             panic_with_error!(&env, InvoiceError::InvalidDiscount);
         }
@@ -1582,6 +1616,30 @@ impl InvoiceContract {
     /// ```
     pub fn get_issuer(env: Env, invoice_id: BytesN<32>) -> Address {
         Self::get_invoice(&env, invoice_id).issuer
+    }
+
+    /// Returns the buyer address for an invoice.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `invoice_id` - The invoice to query.
+    ///
+    /// # Auth
+    /// No authorization is required.
+    ///
+    /// # Panics
+    /// * `InvoiceError::NotInitialized` if the contract has not been initialized.
+    /// * `InvoiceError::NotFound` if the invoice cannot be found.
+    ///
+    /// # Returns
+    /// * `Address` - The buyer address.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let buyer = client.get_buyer(&invoice_id);
+    /// ```
+    pub fn get_buyer(env: Env, invoice_id: BytesN<32>) -> Address {
+        Self::get_invoice(&env, invoice_id).buyer
     }
 
     pub fn transfer_ownership(env: Env, new_admin: Address) {

@@ -61,6 +61,31 @@ impl EscrowContract {
         token::Client::new(env, &usdc_id)
     }
 
+    /// Returns the USDC asset this escrow contract was initialized with.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    ///
+    /// # Auth
+    /// None. This is a read-only view.
+    ///
+    /// # Panics
+    /// * `NotInitialized` if the contract has not been initialized.
+    ///
+    /// # Returns
+    /// * `Address` - The USDC asset address.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let asset = client.get_usdc_asset();
+    /// ```
+    pub fn get_usdc_asset(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::UsdcAsset)
+            .unwrap_or_else(|| panic_with_error!(&env, EscrowError::NotInitialized))
+    }
+
     /// Locks USDC in escrow against a funded invoice.
     ///
     /// # Arguments

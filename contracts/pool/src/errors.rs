@@ -18,4 +18,8 @@ pub enum PoolError {
     InvalidConfiguration = 15,
     AlreadyFunded = 16,
     ActiveCountUnderflow = 17,
+    IssuerNotVerified = 18,
+    BuyerNotVerified = 19,
+    EscrowAssetMismatch = 20,
+    EscrowDefaultNotReleased = 21,
 }
