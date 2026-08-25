@@ -19,3 +19,19 @@
 pub const THRESHOLD: u32 = 500_000;
 /// Ledger count the entry is extended to when `THRESHOLD` is crossed.
 pub const EXTEND_TO: u32 = 2_000_000;
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn threshold_is_below_extend_to() {
+        assert!(THRESHOLD < EXTEND_TO);
+    }
+
+    #[test]
+    fn constants_are_non_zero() {
+        assert!(THRESHOLD > 0);
+        assert!(EXTEND_TO > 0);
+    }
+}
