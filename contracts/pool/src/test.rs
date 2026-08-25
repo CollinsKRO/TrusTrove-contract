@@ -1563,6 +1563,69 @@ fn test_handle_default_updates_invoice_status() {
     assert_eq!(te.invoice.get_status(&invoice_id), 6);
 }
 
+// Reproduces #627: every other default-path test drives the flow by calling
+// te.pool.handle_default() directly, bypassing the real production entry
+// point. A permissionless caller only ever has invoice.trigger_default(),
+// which locally marks the invoice Defaulted and then invokes
+// pool.handle_default() (which in turn calls escrow.handle_default() and
+// calls back into invoice.mark_defaulted()). This test drives the full
+// invoice -> pool -> escrow -> invoice chain through trigger_default() and
+// asserts the same end state the isolated handle_default-only tests assert,
+// including that mark_defaulted's idempotent no-op branch is hit without
+// erroring (the invoice is already Defaulted by the time pool calls back).
+#[test]
+fn test_trigger_default_drives_full_pool_and_escrow_chain() {
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+    te.pool.fund_invoice(&invoice_id);
+
+    let funded_amount = DEFAULT_FUNDED_AMOUNT;
+    let before = te.pool.get_stats();
+    let position_before = te.pool.get_lp_position(&te.lp);
+
+    // Invoice should be Funded (2) before default.
+    assert_eq!(te.invoice.get_status(&invoice_id), 2);
+
+    let escrow_client = RealEscrowClient::new(&te.env, &te.escrow_id);
+    assert_eq!(escrow_client.get_locked(&invoice_id), funded_amount);
+
+    // Advance past escrow's DEFAULT_MIN_LOCK_SECONDS grace period.
+    te.env
+        .ledger()
+        .set_timestamp(te.env.ledger().timestamp() + 60);
+
+    // Drive the real production entry point instead of calling
+    // pool.handle_default() directly.
+    let result = te.invoice.trigger_default(&invoice_id);
+    assert!(result);
+
+    // Invoice status: trigger_default sets Defaulted locally, and the
+    // subsequent pool -> escrow -> invoice.mark_defaulted() callback hits
+    // its idempotent no-op branch without erroring (asserted implicitly by
+    // trigger_default not panicking above).
+    assert_eq!(te.invoice.get_status(&invoice_id), 6);
+
+    // Pool totals update exactly as in the isolated handle_default tests.
+    let after = te.pool.get_stats();
+    let position_after = te.pool.get_lp_position(&te.lp);
+    assert_eq!(after.total_deposits, before.total_deposits - funded_amount);
+    assert_eq!(after.total_funded, 0);
+    assert_eq!(after.active_invoice_count, 0);
+    assert_eq!(after.total_shares, before.total_shares);
+    assert_eq!(
+        after.total_loss_realised,
+        before.total_loss_realised + funded_amount
+    );
+    assert_eq!(
+        position_after.usdc_value,
+        position_before.usdc_value - funded_amount
+    );
+
+    // Escrow's lock record is removed.
+    assert_eq!(escrow_client.get_locked(&invoice_id), 0);
+}
+
 #[test]
 fn test_handle_default_rejects_double_default() {
     let te = setup();
