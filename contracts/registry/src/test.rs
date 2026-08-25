@@ -1018,16 +1018,42 @@ fn test_registry_transfer_ownership_requires_both_auths() {
 
 // ============== PROPERTY-BASED INVARIANT TESTS ==============
 
+fn build_metadata(
+    env: &Env,
+    entries: &std::vec::Vec<(std::string::String, std::string::String)>,
+) -> soroban_sdk::Map<String, String> {
+    let mut metadata = map![env];
+    for (k, v) in entries {
+        metadata.set(
+            String::from_str(env, k.as_str()),
+            String::from_str(env, v.as_str()),
+        );
+    }
+    metadata
+}
+
+fn metadata_entries() -> impl Strategy<Value = std::vec::Vec<(std::string::String, std::string::String)>> {
+    prop::collection::vec(
+        ("[a-zA-Z_][a-zA-Z0-9_]{0,9}", "[a-zA-Z0-9_]{1,20}"),
+        0..=5,
+    )
+}
+
 #[test]
 fn prop_is_verified_always_consistent_with_get_verification_status_after_register() {
     let mut runner = TestRunner::new(ProptestConfig::with_cases(10));
     runner
-        .run(&(0u32..=1u32), |_seed| {
+        .run(&(any::<bool>(), metadata_entries()), |(is_buyer, entries)| {
             let (env, client) = setup();
             let admin = Address::generate(&env);
             client.initialize(&admin);
             let address = Address::generate(&env);
-            client.register_issuer(&address, &map![&env]);
+            let metadata = build_metadata(&env, &entries);
+            if is_buyer {
+                client.register_buyer(&address, &metadata);
+            } else {
+                client.register_issuer(&address, &metadata);
+            }
             let verified = client.is_verified(&address);
             let status = client.get_verification_status(&address);
             prop_assert!(!verified);
@@ -1041,21 +1067,31 @@ fn prop_is_verified_always_consistent_with_get_verification_status_after_registe
 fn prop_revoke_always_sets_is_verified_false_and_status_revoked() {
     let mut runner = TestRunner::new(ProptestConfig::with_cases(10));
     runner
-        .run(&(0u32..=1u32), |_seed| {
-            let (env, client) = setup();
-            let admin = Address::generate(&env);
-            client.initialize(&admin);
-            let address = Address::generate(&env);
-            client.register_issuer(&address, &map![&env]);
-            client.verify_profile(&address, &true);
-            client.revoke(&address);
-            prop_assert!(!client.is_verified(&address));
-            prop_assert_eq!(
-                client.get_verification_status(&address),
-                VerificationStatus::Revoked
-            );
-            Ok(())
-        })
+        .run(
+            &(any::<bool>(), metadata_entries(), 1usize..=3),
+            |(is_buyer, entries, verify_count)| {
+                let (env, client) = setup();
+                let admin = Address::generate(&env);
+                client.initialize(&admin);
+                let address = Address::generate(&env);
+                let metadata = build_metadata(&env, &entries);
+                if is_buyer {
+                    client.register_buyer(&address, &metadata);
+                } else {
+                    client.register_issuer(&address, &metadata);
+                }
+                for _ in 0..verify_count {
+                    client.verify_profile(&address, &true);
+                }
+                client.revoke(&address);
+                prop_assert!(!client.is_verified(&address));
+                prop_assert_eq!(
+                    client.get_verification_status(&address),
+                    VerificationStatus::Revoked
+                );
+                Ok(())
+            },
+        )
         .unwrap();
 }
 
@@ -1063,18 +1099,30 @@ fn prop_revoke_always_sets_is_verified_false_and_status_revoked() {
 fn prop_unregistered_address_never_verified() {
     let mut runner = TestRunner::new(ProptestConfig::with_cases(10));
     runner
-        .run(&(0u32..=1u32), |_seed| {
-            let (env, client) = setup();
-            let admin = Address::generate(&env);
-            client.initialize(&admin);
-            let unknown = Address::generate(&env);
-            prop_assert!(!client.is_verified(&unknown));
-            prop_assert_eq!(
-                client.get_verification_status(&unknown),
-                VerificationStatus::Unregistered
-            );
-            Ok(())
-        })
+        .run(
+            &prop::collection::vec((any::<bool>(), metadata_entries()), 1..=5),
+            |other_profiles| {
+                let (env, client) = setup();
+                let admin = Address::generate(&env);
+                client.initialize(&admin);
+                for (is_buyer, entries) in &other_profiles {
+                    let addr = Address::generate(&env);
+                    let metadata = build_metadata(&env, entries);
+                    if *is_buyer {
+                        client.register_buyer(&addr, &metadata);
+                    } else {
+                        client.register_issuer(&addr, &metadata);
+                    }
+                }
+                let unknown = Address::generate(&env);
+                prop_assert!(!client.is_verified(&unknown));
+                prop_assert_eq!(
+                    client.get_verification_status(&unknown),
+                    VerificationStatus::Unregistered
+                );
+                Ok(())
+            },
+        )
         .unwrap();
 }
 
@@ -1082,26 +1130,36 @@ fn prop_unregistered_address_never_verified() {
 fn prop_re_verify_after_revoke_restores_verified_state() {
     let mut runner = TestRunner::new(ProptestConfig::with_cases(10));
     runner
-        .run(&(0u32..=1u32), |_seed| {
-            let (env, client) = setup();
-            let admin = Address::generate(&env);
-            client.initialize(&admin);
-            let address = Address::generate(&env);
-            client.register_issuer(&address, &map![&env]);
-            client.verify_profile(&address, &true);
-            client.revoke(&address);
-            prop_assert_eq!(
-                client.get_verification_status(&address),
-                VerificationStatus::Revoked
-            );
-            client.verify_profile(&address, &true);
-            prop_assert!(client.is_verified(&address));
-            prop_assert_eq!(
-                client.get_verification_status(&address),
-                VerificationStatus::Verified
-            );
-            Ok(())
-        })
+        .run(
+            &(any::<bool>(), metadata_entries(), 1usize..=3),
+            |(is_buyer, entries, cycles)| {
+                let (env, client) = setup();
+                let admin = Address::generate(&env);
+                client.initialize(&admin);
+                let address = Address::generate(&env);
+                let metadata = build_metadata(&env, &entries);
+                if is_buyer {
+                    client.register_buyer(&address, &metadata);
+                } else {
+                    client.register_issuer(&address, &metadata);
+                }
+                client.verify_profile(&address, &true);
+                for _ in 0..cycles {
+                    client.revoke(&address);
+                    prop_assert_eq!(
+                        client.get_verification_status(&address),
+                        VerificationStatus::Revoked
+                    );
+                    client.verify_profile(&address, &true);
+                    prop_assert!(client.is_verified(&address));
+                    prop_assert_eq!(
+                        client.get_verification_status(&address),
+                        VerificationStatus::Verified
+                    );
+                }
+                Ok(())
+            },
+        )
         .unwrap();
 }
 
