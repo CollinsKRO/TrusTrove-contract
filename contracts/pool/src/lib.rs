@@ -44,6 +44,9 @@ impl PoolContract {
     /// * `invoice_contract` - The invoice contract address.
     /// * `escrow_contract` - The escrow contract address.
     /// * `usdc_asset` - The USDC asset address.
+    /// * `registry_contract` - The registry contract address, consulted by
+    ///   `fund_invoice` to re-verify the issuer and buyer are still verified
+    ///   before pool capital is committed.
     ///
     /// # Auth
     /// Requires authorization from `admin`.
@@ -51,14 +54,15 @@ impl PoolContract {
     /// # Panics
     /// * `AlreadyInitialized` if the contract has already been initialized.
     /// * `InvalidConfiguration` if any two of `admin`, `invoice_contract`,
-    ///   `escrow_contract`, and `usdc_asset` are the same address.
+    ///   `escrow_contract`, `usdc_asset`, and `registry_contract` are the
+    ///   same address.
     ///
     /// # Returns
     /// * `()` - No value is returned.
     ///
     /// # Example
     /// ```ignore
-    /// client.initialize(&admin, &invoice, &escrow, &usdc);
+    /// client.initialize(&admin, &invoice, &escrow, &usdc, &registry);
     /// ```
     pub fn initialize(
         env: Env,
@@ -66,6 +70,7 @@ impl PoolContract {
         invoice_contract: Address,
         escrow_contract: Address,
         usdc_asset: Address,
+        registry_contract: Address,
     ) {
         if Self::admin(&env).is_some() {
             panic_with_error!(&env, PoolError::AlreadyInitialized);
@@ -73,9 +78,13 @@ impl PoolContract {
         if admin == invoice_contract
             || admin == escrow_contract
             || admin == usdc_asset
+            || admin == registry_contract
             || invoice_contract == escrow_contract
             || invoice_contract == usdc_asset
+            || invoice_contract == registry_contract
             || escrow_contract == usdc_asset
+            || escrow_contract == registry_contract
+            || usdc_asset == registry_contract
         {
             panic_with_error!(&env, PoolError::InvalidConfiguration);
         }
@@ -90,6 +99,9 @@ impl PoolContract {
         env.storage()
             .instance()
             .set(&DataKey::UsdcAsset, &usdc_asset);
+        env.storage()
+            .instance()
+            .set(&DataKey::RegistryContract, &registry_contract);
         env.storage().instance().set(&DataKey::TotalShares, &0u128);
         env.storage()
             .instance()
@@ -371,9 +383,23 @@ impl PoolContract {
     /// See README §"Known Centralization Risks & Roadmap" for the longer-term
     /// governance design that will let LPs signal approval on funding decisions.
     ///
+    /// # Registry re-verification
+    /// The issuer and buyer's registry verification is re-checked here, in
+    /// addition to the checks already performed by `invoice.create()` and
+    /// `invoice.list_for_financing()`. This is the point where pool capital
+    /// is actually committed, so a revocation that happened after listing
+    /// must still block new funding. Once funding succeeds, verification is
+    /// **not** re-checked again at any later step (`mark_shipped`,
+    /// `confirm_delivery`, `repay`, `trigger_default`) — see
+    /// `InvoiceContract::list_for_financing` for the rationale.
+    ///
     /// # Panics
     /// * `InvoiceNotListed` if the invoice is not in listed status.
     /// * `AlreadyFunded` if a `FundedInvoice` entry already exists for this invoice id.
+    /// * `IssuerNotVerified` if the invoice issuer's registry verification has
+    ///   since been revoked.
+    /// * `BuyerNotVerified` if the invoice buyer's registry verification has
+    ///   since been revoked.
     /// * `AssetMismatch` if the invoice funding asset does not match pool USDC.
     /// * `InvalidAmount` if the computed funded amount is zero.
     /// * `InsufficientLiquidity` if the pool does not have enough funds.
@@ -401,6 +427,31 @@ impl PoolContract {
         let funded_key = DataKey::FundedInvoice(invoice_id.clone());
         if env.storage().persistent().has(&funded_key) {
             panic_with_error!(&env, PoolError::AlreadyFunded);
+        }
+
+        let registry_id = Self::registry_contract(&env);
+        let mut args = Vec::new(&env);
+        args.push_back(invoice_id.clone().into_val(&env));
+        let issuer: Address =
+            env.invoke_contract(&invoice_contract, &Symbol::new(&env, "get_issuer"), args);
+        let mut args = Vec::new(&env);
+        args.push_back(issuer.into_val(&env));
+        let issuer_verified: bool =
+            env.invoke_contract(&registry_id, &Symbol::new(&env, "is_verified"), args);
+        if !issuer_verified {
+            panic_with_error!(&env, PoolError::IssuerNotVerified);
+        }
+
+        let mut args = Vec::new(&env);
+        args.push_back(invoice_id.clone().into_val(&env));
+        let buyer: Address =
+            env.invoke_contract(&invoice_contract, &Symbol::new(&env, "get_buyer"), args);
+        let mut args = Vec::new(&env);
+        args.push_back(buyer.into_val(&env));
+        let buyer_verified: bool =
+            env.invoke_contract(&registry_id, &Symbol::new(&env, "is_verified"), args);
+        if !buyer_verified {
+            panic_with_error!(&env, PoolError::BuyerNotVerified);
         }
 
         let mut args = Vec::new(&env);
@@ -922,6 +973,13 @@ impl PoolContract {
             .instance()
             .get(&DataKey::UsdcAsset)
             .expect("pool is not initialized: USDC asset missing")
+    }
+
+    fn registry_contract(env: &Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::RegistryContract)
+            .expect("pool is not initialized: registry contract missing")
     }
 
     fn totals(env: &Env) -> PoolTotals {
