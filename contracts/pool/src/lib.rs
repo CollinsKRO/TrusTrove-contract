@@ -106,11 +106,8 @@ impl PoolContract {
         // escrow_contract to already be initialized at the time pool.initialize
         // is called.
         let args = Vec::new(&env);
-        let escrow_usdc_asset: Address = env.invoke_contract(
-            &escrow_contract,
-            &Symbol::new(&env, "get_usdc_asset"),
-            args,
-        );
+        let escrow_usdc_asset: Address =
+            env.invoke_contract(&escrow_contract, &Symbol::new(&env, "get_usdc_asset"), args);
         if escrow_usdc_asset != usdc_asset {
             panic_with_error!(&env, PoolError::EscrowAssetMismatch);
         }

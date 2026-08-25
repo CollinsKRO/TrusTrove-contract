@@ -666,7 +666,10 @@ fn test_revocation_after_funding_does_not_block_lifecycle() {
     let invoice_id = create_and_list(&te, &te.usdc_id);
 
     let result = te.pool.fund_invoice(&invoice_id);
-    assert!(result, "funding must succeed while both parties are verified");
+    assert!(
+        result,
+        "funding must succeed while both parties are verified"
+    );
 
     // Revoke both issuer and buyer only after the pool has already
     // committed capital.
@@ -1516,9 +1519,9 @@ fn test_handle_default_rejects_when_escrow_reports_no_release() {
     assert_eq!(after.active_invoice_count, before.active_invoice_count);
 
     let funded_key = DataKey::FundedInvoice(invoice_id.clone());
-    let still_funded = te
-        .env
-        .as_contract(&te.pool_id, || te.env.storage().persistent().has(&funded_key));
+    let still_funded = te.env.as_contract(&te.pool_id, || {
+        te.env.storage().persistent().has(&funded_key)
+    });
     assert!(still_funded);
 }
 
