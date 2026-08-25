@@ -1563,6 +1563,48 @@ fn test_handle_default_updates_invoice_status() {
     assert_eq!(te.invoice.get_status(&invoice_id), 6);
 }
 
+// Reproduces #627: every other default-path test drives the flow by calling
+// te.pool.handle_default() directly, bypassing the real production entry
+// point. A permissionless caller only ever has invoice.trigger_default(),
+// which locally marks the invoice Defaulted and then invokes
+// pool.handle_default() (which in turn calls escrow.handle_default() and
+// calls back into invoice.mark_defaulted()).
+//
+// Driving the chain from invoice.trigger_default() (rather than from
+// pool.handle_default() as the top-level caller) surfaces a real bug: the
+// invoice contract is still on the call stack when pool calls back into
+// invoice.mark_defaulted(), and Soroban's runtime rejects that as
+// self-re-entrancy ("Contract re-entry is not allowed"), regardless of
+// mark_defaulted's idempotent no-op logic. This test pins that current
+// behavior; see follow-up issue for fixing the underlying re-entrancy in
+// InvoiceContract::trigger_default / PoolContract::handle_default.
+#[test]
+#[should_panic(expected = "Error(Context, InvalidAction)")]
+fn test_trigger_default_drives_full_pool_and_escrow_chain() {
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+    te.pool.fund_invoice(&invoice_id);
+
+    // Invoice should be Funded (2) before default.
+    assert_eq!(te.invoice.get_status(&invoice_id), 2);
+
+    let escrow_client = RealEscrowClient::new(&te.env, &te.escrow_id);
+    assert_eq!(escrow_client.get_locked(&invoice_id), DEFAULT_FUNDED_AMOUNT);
+
+    // Advance past both the invoice's due_date (86400s from creation) and
+    // escrow's DEFAULT_MIN_LOCK_SECONDS grace period (60s from funding), so
+    // trigger_default's due-date gate and escrow's lock-age gate both pass.
+    te.env
+        .ledger()
+        .set_timestamp(te.env.ledger().timestamp() + 86401);
+
+    // Drive the real production entry point instead of calling
+    // pool.handle_default() directly. This panics with a re-entrancy error
+    // once pool calls back into invoice.mark_defaulted() (see comment above).
+    te.invoice.trigger_default(&invoice_id);
+}
+
 #[test]
 fn test_handle_default_rejects_double_default() {
     let te = setup();
