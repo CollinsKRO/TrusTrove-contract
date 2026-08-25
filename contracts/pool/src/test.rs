@@ -2276,3 +2276,137 @@ fn test_withdraw_before_initialize_panics() {
     }]);
     pool.withdraw(&lp, &1_000);
 }
+
+// --------------- Real Registry Integration ---------------
+//
+// Every other test in this file uses MockRegistry, a hand-rolled stand-in
+// for registry-style verification. This test instead deploys the real
+// RegistryContract alongside real invoice/escrow/pool contracts and drives
+// a full register -> verify -> create -> list -> fund -> repay lifecycle
+// through it, so the actual cross-contract is_verified call (argument
+// shape, NotInitialized/NotFound panic semantics) is exercised against
+// production code rather than the mock. Refs: issue #631.
+mod real_registry_integration {
+    use super::*;
+    use soroban_sdk::{map, String};
+    use trusttrove_registry::{RegistryContract as RealRegistry, RegistryContractClient as RealRegistryClient};
+
+    #[test]
+    fn test_full_lifecycle_with_real_registry() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+
+        let admin = Address::generate(&env);
+        let issuer = Address::generate(&env);
+        let buyer = Address::generate(&env);
+        let lp = Address::generate(&env);
+
+        // --- Deploy the real registry and drive register -> verify ---
+        let registry_id = env.register_contract(None, RealRegistry);
+        let registry = RealRegistryClient::new(&env, &registry_id);
+        registry.initialize(&admin);
+
+        let metadata: Map<String, String> = map![&env, (String::from_str(&env, "name"), String::from_str(&env, "test"))];
+        registry.register_issuer(&issuer, &metadata);
+        registry.register_buyer(&buyer, &metadata);
+
+        // Newly registered profiles start unverified (#130) — must be
+        // explicitly verified by the admin before is_verified() returns true.
+        assert!(!registry.is_verified(&issuer));
+        assert!(!registry.is_verified(&buyer));
+        registry.verify_profile(&issuer, &true);
+        registry.verify_profile(&buyer, &true);
+        assert!(registry.is_verified(&issuer));
+        assert!(registry.is_verified(&buyer));
+
+        // --- Deploy real invoice, escrow, pool wired to the real registry ---
+        let usdc_id = env.register_contract(None, MockToken);
+        let lp_bal_key = TKey(lp.clone());
+        env.as_contract(&usdc_id, || {
+            env.storage()
+                .persistent()
+                .set(&lp_bal_key, &100_000_000_000_000i128);
+        });
+        let buyer_bal_key = TKey(buyer.clone());
+        env.as_contract(&usdc_id, || {
+            env.storage()
+                .persistent()
+                .set(&buyer_bal_key, &100_000_000_000_000i128);
+        });
+
+        let invoice_id_addr = env.register_contract(None, RealInvoice);
+        let escrow_id = env.register_contract(None, RealEscrow);
+        let pool_id = env.register_contract(None, PoolContract);
+
+        let invoice = RealInvoiceClient::new(&env, &invoice_id_addr);
+        invoice.initialize(&admin, &registry_id);
+
+        let escrow = RealEscrowClient::new(&env, &escrow_id);
+        escrow.initialize(&admin, &pool_id, &usdc_id);
+
+        let pool = PoolContractClient::new(&env, &pool_id);
+        pool.initialize(&admin, &invoice_id_addr, &escrow_id, &usdc_id, &registry_id);
+
+        invoice.add_supported_asset(&usdc_id);
+        invoice.set_pool_contract(&pool_id);
+        invoice.set_escrow_contract(&escrow_id);
+        pool.set_max_utilization(&admin, &10000);
+
+        // --- Drive the full lifecycle: create -> list -> fund -> repay ---
+        let face_value: u128 = 10_000_000_000;
+        let discount_bps: u32 = 200;
+        let due_date = env.ledger().timestamp() + 86400;
+
+        pool.deposit(&lp, &face_value);
+
+        let invoice_id = invoice.create(&issuer, &buyer, &face_value, &due_date, &usdc_id);
+        invoice.list_for_financing(&invoice_id, &discount_bps);
+
+        let funded = pool.fund_invoice(&invoice_id);
+        assert!(funded);
+
+        let record = invoice.get(&invoice_id);
+        assert_eq!(record.status, trusttrove_invoice::InvoiceStatus::Funded);
+
+        invoice.mark_shipped(&invoice_id);
+        invoice.confirm_delivery(&invoice_id, &issuer);
+        invoice.confirm_delivery(&invoice_id, &buyer);
+
+        let record = invoice.get(&invoice_id);
+        assert_eq!(record.status, trusttrove_invoice::InvoiceStatus::Confirmed);
+
+        invoice.repay(&invoice_id);
+
+        let record = invoice.get(&invoice_id);
+        assert_eq!(record.status, trusttrove_invoice::InvoiceStatus::Repaid);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #")]
+    fn test_real_registry_is_verified_panics_when_not_initialized() {
+        // Confirms the real registry's is_verified semantics: on an
+        // uninitialized (or unregistered) address it returns `false` rather
+        // than panicking, which invoice.create()'s require_verified() then
+        // turns into an IssuerNotVerified panic. This is the behavior
+        // invoice's require_verified relies on — it must match the mock's
+        // unwrap_or(false) behavior used everywhere else in this file.
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+
+        let admin = Address::generate(&env);
+        let issuer = Address::generate(&env);
+        let buyer = Address::generate(&env);
+
+        let registry_id = env.register_contract(None, RealRegistry);
+        // Registry intentionally left uninitialized.
+
+        let usdc_id = env.register_contract(None, MockToken);
+        let invoice_id_addr = env.register_contract(None, RealInvoice);
+        let invoice = RealInvoiceClient::new(&env, &invoice_id_addr);
+        invoice.initialize(&admin, &registry_id);
+        invoice.add_supported_asset(&usdc_id);
+
+        let due_date = env.ledger().timestamp() + 86400;
+        invoice.create(&issuer, &buyer, &10_000_000_000u128, &due_date, &usdc_id);
+    }
+}

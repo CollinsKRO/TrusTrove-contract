@@ -290,6 +290,7 @@ Verify on [Stellar Expert Testnet](https://stellar.expert/explorer/testnet)
 
 - Rust 1.85.0 (required — other versions either have WASM bugs or are blocked by Stellar CLI)
 - [Stellar CLI](https://github.com/stellar/stellar-cli) (latest)
+- [jq](https://jqlang.github.io/jq/download/) (latest) — required by `scripts/maintainer/update-readme-addresses.sh`, which runs automatically at the end of `deploy.sh`
 
 ### 1. Install Rust 1.85.0
 
