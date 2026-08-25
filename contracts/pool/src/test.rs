@@ -223,7 +223,7 @@ fn setup() -> TestEnv {
     invoice.initialize(&admin, &registry_id);
 
     let escrow = RealEscrowClient::new(&env, &escrow_id);
-    escrow.initialize(&admin, &pool_id, &usdc_id);
+    escrow.initialize(&admin, &pool_id, &invoice_id, &usdc_id);
 
     let pool = PoolContractClient::new(&env, &pool_id);
     pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id, &registry_id);
@@ -908,7 +908,7 @@ fn test_default_max_utilization_in_stats() {
     let usdc_id = env.register_contract(None, MockToken);
     RealInvoiceClient::new(&env, &invoice_id).initialize(&admin, &registry_id);
     let pool_id = env.register_contract(None, PoolContract);
-    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &usdc_id);
+    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &invoice_id, &usdc_id);
     let pool = PoolContractClient::new(&env, &pool_id);
     pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id, &registry_id);
     let stats = pool.get_stats();
@@ -1071,6 +1071,71 @@ fn test_lp_position_reflects_current_share_price() {
     let pos = te.pool.get_lp_position(&te.lp);
     assert_eq!(pos.usdc_value, DEFAULT_FACE_VALUE + DEFAULT_YIELD_AMOUNT);
     assert_eq!(pos.shares, 10_000_000_000);
+}
+
+// Reproduces #630: repay_early() was previously only exercised against
+// MockPool in the invoice crate's own tests, never against the real
+// escrow+pool setup wired up here. This drives invoice.repay_early()
+// end-to-end (buyer -> escrow -> pool) partway through the term and asserts
+// the pool-side accounting effects (yield split into total_deposits /
+// total_yield_distributed) and the buyer's discount refund match the
+// elapsed/term-proportional split repay_early computes internally.
+#[test]
+fn test_repay_early_against_real_pool_and_escrow() {
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+    let invoice_id = create_and_list(&te, &te.usdc_id);
+    te.pool.fund_invoice(&invoice_id);
+
+    te.invoice.mark_shipped(&invoice_id);
+    te.invoice.confirm_delivery(&invoice_id, &te.issuer);
+    te.invoice.confirm_delivery(&invoice_id, &te.buyer);
+
+    // face_value=10_000_000_000, discount_bps=200 (2%)
+    // funded_amount = 10_000_000_000 * 9800 / 10000 = 9_800_000_000
+    // discount = 200_000_000; term = 86400s (due_date - funded_at)
+    let face_value: u128 = 10_000_000_000;
+    let discount: u128 = 200_000_000;
+    let term: u64 = 86400;
+
+    // Repay halfway through the term.
+    let elapsed: u64 = term / 2;
+    te.env
+        .ledger()
+        .set_timestamp(te.env.ledger().timestamp() + elapsed);
+
+    let earned_by_pool = discount * (elapsed as u128) / (term as u128);
+    let refund_to_buyer = discount - earned_by_pool;
+
+    let stats_before = te.pool.get_stats();
+    let buyer_balance_before = MockTokenClient::new(&te.env, &te.usdc_id).balance(&te.buyer);
+
+    let result = te.invoice.repay_early(&invoice_id);
+    assert!(result);
+
+    let stats_after = te.pool.get_stats();
+    assert_eq!(
+        stats_after.total_deposits,
+        stats_before.total_deposits + earned_by_pool
+    );
+    assert_eq!(
+        stats_after.total_yield_distributed,
+        stats_before.total_yield_distributed + earned_by_pool
+    );
+    assert_eq!(stats_after.total_funded, 0);
+    assert_eq!(stats_after.active_invoice_count, 0);
+
+    let buyer_balance_after = MockTokenClient::new(&te.env, &te.usdc_id).balance(&te.buyer);
+    assert_eq!(
+        buyer_balance_after,
+        buyer_balance_before - (face_value as i128) + (refund_to_buyer as i128)
+    );
+
+    // Escrow's lock record must be gone after release_to_pool.
+    let escrow_client = RealEscrowClient::new(&te.env, &te.escrow_id);
+    assert_eq!(escrow_client.get_locked(&invoice_id), 0);
+
+    assert_eq!(te.invoice.get_status(&invoice_id), 5); // Repaid
 }
 
 // ============== MULTI-LP TESTS ==============
@@ -1349,6 +1414,39 @@ fn test_handle_default_active_count_underflow_panics() {
         .set_timestamp(te.env.ledger().timestamp() + 60);
 
     te.pool.handle_default(&phantom_id);
+}
+
+// Reproduces #629: invoice.trigger_default's due-date gate (`now >=
+// due_date`) has no awareness of escrow's independent
+// DEFAULT_MIN_LOCK_SECONDS (60s) grace period measured from the escrow lock
+// timestamp (~funded_at). For an invoice whose due_date is reached less
+// than 60s after funding, trigger_default sets the invoice to Defaulted
+// locally and then transitively calls escrow.handle_default() (via
+// pool.handle_default), which panics with EscrowError::NotAuthorized,
+// reverting the whole transaction. This test pins that current behavior;
+// see the rustdoc coupling notes on both `EscrowContract::handle_default`
+// and `InvoiceContract::trigger_default`.
+#[test]
+#[should_panic(expected = "Error(Contract, #3)")]
+fn test_trigger_default_reverts_when_escrow_grace_period_not_elapsed() {
+    let te = setup();
+    te.pool.deposit(&te.lp, &100_000_000_000);
+
+    // due_date reached only 30s after now (well under escrow's 60s grace
+    // period, and funding happens immediately after listing in this test).
+    let due_date = te.env.ledger().timestamp() + 30;
+    let face_value: u128 = 10_000_000_000;
+    let invoice_id = te
+        .invoice
+        .create(&te.issuer, &te.buyer, &face_value, &due_date, &te.usdc_id);
+    attest_invoice(&te, &invoice_id);
+    te.invoice.list_for_financing(&invoice_id, &200);
+    te.pool.fund_invoice(&invoice_id);
+
+    // Advance past due_date but still within escrow's 60s lock grace period.
+    te.env.ledger().set_timestamp(due_date + 1);
+
+    te.invoice.trigger_default(&invoice_id);
 }
 
 // ============== DEFAULT TESTS ==============
@@ -2122,7 +2220,7 @@ fn test_deposit_extends_instance_ttl_when_below_threshold() {
     RealInvoiceClient::new(&env, &invoice_id).initialize(&admin, &registry_id);
 
     let pool_id = env.register_contract(None, PoolContract);
-    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &usdc_id);
+    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &invoice_id, &usdc_id);
 
     // Before initialize: TTL is the default of ~4096 ledgers.
     let ttl_before = env.as_contract(&pool_id, || env.storage().instance().get_ttl());
@@ -2175,11 +2273,17 @@ fn test_double_initialize_panics() {
         invoke: &MockAuthInvoke {
             contract: &escrow_id,
             fn_name: "initialize",
-            args: (admin.clone(), pool_id.clone(), usdc_id.clone()).into_val(&env),
+            args: (
+                admin.clone(),
+                pool_id.clone(),
+                invoice_id.clone(),
+                usdc_id.clone(),
+            )
+                .into_val(&env),
             sub_invokes: &[],
         },
     }]);
-    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &usdc_id);
+    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &invoice_id, &usdc_id);
 
     // First pool initialize — succeeds with explicit auth
     env.mock_auths(&[MockAuth {
@@ -2350,7 +2454,7 @@ mod real_registry_integration {
         invoice.initialize(&admin, &registry_id);
 
         let escrow = RealEscrowClient::new(&env, &escrow_id);
-        escrow.initialize(&admin, &pool_id, &usdc_id);
+        escrow.initialize(&admin, &pool_id, &invoice_id_addr, &usdc_id);
 
         let pool = PoolContractClient::new(&env, &pool_id);
         pool.initialize(&admin, &invoice_id_addr, &escrow_id, &usdc_id, &registry_id);
