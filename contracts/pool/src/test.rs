@@ -2310,7 +2310,10 @@ mod real_registry_integration {
 
         let metadata: Map<String, String> = map![
             &env,
-            (String::from_str(&env, "name"), String::from_str(&env, "test"))
+            (
+                String::from_str(&env, "name"),
+                String::from_str(&env, "test")
+            )
         ];
         registry.register_issuer(&issuer, &metadata);
         registry.register_buyer(&buyer, &metadata);
@@ -2350,13 +2353,7 @@ mod real_registry_integration {
         escrow.initialize(&admin, &pool_id, &usdc_id);
 
         let pool = PoolContractClient::new(&env, &pool_id);
-        pool.initialize(
-            &admin,
-            &invoice_id_addr,
-            &escrow_id,
-            &usdc_id,
-            &registry_id,
-        );
+        pool.initialize(&admin, &invoice_id_addr, &escrow_id, &usdc_id, &registry_id);
 
         invoice.add_supported_asset(&usdc_id);
         invoice.set_pool_contract(&pool_id);
