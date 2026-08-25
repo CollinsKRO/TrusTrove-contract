@@ -51,17 +51,26 @@ impl PoolContract {
     /// # Auth
     /// Requires authorization from `admin`.
     ///
+    /// # Wiring order
+    /// `escrow_contract` must already be initialized before this call, since
+    /// `initialize` cross-checks `escrow_contract.get_usdc_asset()` against
+    /// its own `usdc_asset` to catch a misconfigured deploy where escrow was
+    /// wired up with a different token.
+    ///
     /// # Panics
     /// * `AlreadyInitialized` if the contract has already been initialized.
     /// * `InvalidConfiguration` if any two of `admin`, `invoice_contract`,
     ///   `escrow_contract`, `usdc_asset`, and `registry_contract` are the
     ///   same address.
+    /// * `EscrowAssetMismatch` if `escrow_contract`'s configured USDC asset
+    ///   does not match `usdc_asset`.
     ///
     /// # Returns
     /// * `()` - No value is returned.
     ///
     /// # Example
     /// ```ignore
+    /// escrow_client.initialize(&admin, &pool, &usdc); // escrow first
     /// client.initialize(&admin, &invoice, &escrow, &usdc, &registry);
     /// ```
     pub fn initialize(
@@ -88,6 +97,24 @@ impl PoolContract {
         {
             panic_with_error!(&env, PoolError::InvalidConfiguration);
         }
+
+        // Cross-check that the escrow contract being wired in was itself
+        // initialized with the same usdc_asset. A mismatch here would only
+        // otherwise surface later as a failed token transfer inside
+        // fund_invoice's escrow.lock call, since escrow.lock pulls funds
+        // using escrow's own configured token client. This requires
+        // escrow_contract to already be initialized at the time pool.initialize
+        // is called.
+        let args = Vec::new(&env);
+        let escrow_usdc_asset: Address = env.invoke_contract(
+            &escrow_contract,
+            &Symbol::new(&env, "get_usdc_asset"),
+            args,
+        );
+        if escrow_usdc_asset != usdc_asset {
+            panic_with_error!(&env, PoolError::EscrowAssetMismatch);
+        }
+
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage()
@@ -623,6 +650,18 @@ impl PoolContract {
     /// (via `invoice_contract.require_auth()`); only the invoice contract may
     /// invoke this entry point.
     ///
+    /// # Trust boundary: the discount/refund split is invoice-computed
+    /// `invoice.repay()` / `invoice.repay_early()` independently compute
+    /// `earned_by_pool` / `refund_to_buyer` from the invoice's discount,
+    /// elapsed time, and term, and pass the resulting `refund` here. Pool has
+    /// no visibility into `funded_at`, `due_date`, or elapsed/term at all —
+    /// it only bounds `refund` to `[0, amount - funded_amount]` (the maximum
+    /// possible discount) via `InvalidAmount`. Pool does **not** independently
+    /// verify that `refund` is proportional to time elapsed; any `refund`
+    /// invoice passes within that bound is accepted unconditionally, and the
+    /// remainder is credited to LPs as yield. Correctness of the time-based
+    /// split is entirely `invoice_contract`'s responsibility.
+    ///
     /// # Panics
     /// * `InvoiceNotFound` if the invoice is not funded.
     /// * `InvalidAmount` if the repayment amount is less than the funded amount,
@@ -726,6 +765,12 @@ impl PoolContract {
     ///
     /// # Panics
     /// * `InvoiceNotFound` if no funded invoice entry exists for `invoice_id`.
+    /// * `EscrowDefaultNotReleased` if `escrow.handle_default()` returns `false`
+    ///   (e.g. no lock record exists in escrow for this invoice, so no tokens
+    ///   were actually transferred back to the pool). Without this check, pool
+    ///   accounting would otherwise proceed to record a loss and free up
+    ///   utilization as if funds had been recovered, even though escrow moved
+    ///   nothing.
     /// * `ActiveCountUnderflow` if the active-invoice counter would underflow
     ///   (e.g. double-default of the same invoice).
     ///
@@ -751,8 +796,11 @@ impl PoolContract {
         let mut args = Vec::new(&env);
         args.push_back(invoice_id.clone().into_val(&env));
         args.push_back(pool_address.into_val(&env));
-        let _: bool =
+        let escrow_released: bool =
             env.invoke_contract(&escrow_contract, &Symbol::new(&env, "handle_default"), args);
+        if !escrow_released {
+            panic_with_error!(&env, PoolError::EscrowDefaultNotReleased);
+        }
 
         let totals = Self::totals(&env);
         let total_funded = totals.funded;

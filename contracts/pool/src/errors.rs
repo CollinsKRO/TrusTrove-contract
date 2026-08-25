@@ -20,4 +20,6 @@ pub enum PoolError {
     ActiveCountUnderflow = 17,
     IssuerNotVerified = 18,
     BuyerNotVerified = 19,
+    EscrowAssetMismatch = 20,
+    EscrowDefaultNotReleased = 21,
 }
