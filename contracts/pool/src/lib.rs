@@ -838,11 +838,6 @@ impl PoolContract {
             args,
         );
 
-        let total_loss = totals.loss_realised;
-        env.storage()
-            .instance()
-            .set(&DataKey::TotalLossRealised, &(total_loss + funded_amount));
-
         env.storage().persistent().remove(&funded_key);
 
         events::invoice_defaulted(&env, &invoice_id, funded_amount);
