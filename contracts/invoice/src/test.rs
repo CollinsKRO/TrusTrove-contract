@@ -7,7 +7,7 @@ use soroban_sdk::{
     testutils::{Address as _, Events as _, Ledger},
     token,
     xdr::ToXdr,
-    Address, BytesN, Env, IntoVal, Symbol, TryFromVal,
+    Address, BytesN, Env, IntoVal, String, Symbol, TryFromVal,
 };
 
 use crate::{InvoiceContract, InvoiceContractClient, InvoiceStatus, TTL_EXTEND_TO, TTL_THRESHOLD};
@@ -305,6 +305,30 @@ fn test_create_invoice_with_verified_parties() {
     assert_eq!(invoice.funding_pool, None);
     assert!(!invoice.issuer_confirmed);
     assert!(!invoice.buyer_confirmed);
+}
+
+#[test]
+fn test_get_counts_tracks_created_to_listed() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + DEFAULT_DUE_OFFSET;
+    let invoice_id = client.create(&issuer, &buyer, &DEFAULT_FACE_VALUE, &due_date, &usdc);
+
+    let counts = client.get_counts();
+    assert_eq!(counts.get(String::from_str(&env, "Created")), Some(1));
+    assert_eq!(counts.get(String::from_str(&env, "Listed")), Some(0));
+    assert_eq!(counts.get(String::from_str(&env, "Funded")), Some(0));
+    assert_eq!(counts.get(String::from_str(&env, "Active")), Some(0));
+    assert_eq!(counts.get(String::from_str(&env, "Confirmed")), Some(0));
+    assert_eq!(counts.get(String::from_str(&env, "Repaid")), Some(0));
+    assert_eq!(counts.get(String::from_str(&env, "Defaulted")), Some(0));
+    assert_eq!(counts.get(String::from_str(&env, "Expired")), Some(0));
+
+    attest(&env, &client, &invoice_id);
+    assert!(client.list_for_financing(&invoice_id, &DEFAULT_DISCOUNT_BPS));
+
+    let counts = client.get_counts();
+    assert_eq!(counts.get(String::from_str(&env, "Created")), Some(0));
+    assert_eq!(counts.get(String::from_str(&env, "Listed")), Some(1));
 }
 
 #[test]
