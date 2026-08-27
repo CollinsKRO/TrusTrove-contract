@@ -25,8 +25,6 @@ impl EscrowContract {
     /// * `env` - The Soroban environment.
     /// * `admin` - The admin address for this contract.
     /// * `pool_contract` - The pool contract address.
-    /// * `invoice_contract` - The invoice contract address authorized to call
-    ///   `release_to_pool`.
     /// * `usdc_asset` - The USDC asset address.
     ///
     /// # Auth
@@ -40,15 +38,9 @@ impl EscrowContract {
     ///
     /// # Example
     /// ```ignore
-    /// client.initialize(&admin, &pool, &invoice, &usdc);
+    /// client.initialize(&admin, &pool, &usdc);
     /// ```
-    pub fn initialize(
-        env: Env,
-        admin: Address,
-        pool_contract: Address,
-        invoice_contract: Address,
-        usdc_asset: Address,
-    ) {
+    pub fn initialize(env: Env, admin: Address, pool_contract: Address, usdc_asset: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic_with_error!(&env, EscrowError::AlreadyInitialized);
         }
@@ -59,16 +51,17 @@ impl EscrowContract {
             .set(&DataKey::PoolContract, &pool_contract);
         env.storage()
             .instance()
-            .set(&DataKey::InvoiceContract, &invoice_contract);
-        env.storage()
-            .instance()
             .set(&DataKey::UsdcAsset, &usdc_asset);
         Self::extend_instance_ttl(&env);
     }
 
     /// Get a token client for the USDC asset stored in the contract.
     fn usdc_client(env: &Env) -> token::Client<'_> {
-        let usdc_id: Address = env.storage().instance().get(&DataKey::UsdcAsset).unwrap();
+        let usdc_id: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::UsdcAsset)
+            .unwrap_or_else(|| panic_with_error!(env, EscrowError::NotInitialized));
         token::Client::new(env, &usdc_id)
     }
 
@@ -103,6 +96,7 @@ impl EscrowContract {
     /// * `env` - The Soroban environment.
     /// * `invoice_id` - The invoice ID being locked.
     /// * `amount` - The amount to lock.
+    /// * `issuer` - The invoice issuer address authorized to receive released funds.
     ///
     /// # Auth
     /// Requires authorization from the configured pool contract.
@@ -117,12 +111,12 @@ impl EscrowContract {
     ///
     /// # Example
     /// ```ignore
-    /// client.lock(&invoice_id, &amount);
+    /// client.lock(&invoice_id, &amount, &issuer);
     /// ```
-    pub fn lock(env: Env, invoice_id: BytesN<32>, amount: u128) -> bool {
+    pub fn lock(env: Env, invoice_id: BytesN<32>, amount: u128, issuer: Address) -> bool {
         let pool = Self::require_pool_auth(&env);
 
-        if amount == 0 {
+        if amount == 0 || amount > i128::MAX as u128 {
             panic_with_error!(&env, EscrowError::InvalidAmount);
         }
 
@@ -138,6 +132,7 @@ impl EscrowContract {
             invoice_id: invoice_id.clone(),
             amount,
             locked_at: env.ledger().timestamp(),
+            issuer: issuer.clone(),
         };
         env.storage().persistent().set(&key, &record);
         env.storage()
@@ -145,7 +140,7 @@ impl EscrowContract {
             .extend_ttl(&key, TTL_THRESHOLD, TTL_EXTEND_TO);
         Self::append_history(&env, &invoice_id, EscrowAction::Locked, amount, None);
         Self::extend_instance_ttl(&env);
-        events::funds_locked(&env, &invoice_id, amount);
+        events::funds_locked(&env, &invoice_id, &issuer, amount);
 
         true
     }
@@ -163,7 +158,8 @@ impl EscrowContract {
     /// # Panics
     /// * `NotInitialized` if the contract has not been initialized.
     /// * `NotFound` if no escrow record exists for the invoice.
-    /// * `InvalidRecipient` if issuer is escrow, pool, or invoice contract address.
+    /// * `InvalidRecipient` if issuer is escrow or pool contract address.
+    /// * `InvalidRecipient` if issuer does not match the stored issuer address.
     ///
     /// # Returns
     /// * `bool` - `true` when funds are released.
@@ -186,7 +182,14 @@ impl EscrowContract {
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, EscrowError::NotFound));
 
+        if issuer != record.issuer {
+            panic_with_error!(&env, EscrowError::InvalidRecipient);
+        }
+
         let usdc = Self::usdc_client(&env);
+        if record.amount > i128::MAX as u128 {
+            panic_with_error!(&env, EscrowError::InvalidAmount);
+        }
         usdc.transfer(
             &env.current_contract_address(),
             &issuer,
@@ -218,9 +221,7 @@ impl EscrowContract {
     ///   originally locked amount when the buyer repays the full face value including yield).
     ///
     /// # Auth
-    /// Requires authorization from the configured invoice contract (via
-    /// `invoice_contract.require_auth()`), so only `invoice.repay()` /
-    /// `invoice.repay_early()` can trigger this release.
+    /// Requires authorization from the configured pool contract.
     ///
     /// # Panics
     /// * `NotInitialized` if the contract has not been initialized.
@@ -235,23 +236,9 @@ impl EscrowContract {
     /// client.release_to_pool(&invoice_id, &repayment_amount);
     /// ```
     pub fn release_to_pool(env: Env, invoice_id: BytesN<32>, repayment_amount: u128) -> bool {
-        // This function is called by the invoice contract during buyer repay flows
-        // (buyer → invoice → escrow → pool). Only the configured invoice contract
-        // may trigger it.
-        let invoice_contract: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::InvoiceContract)
-            .unwrap_or_else(|| panic_with_error!(&env, EscrowError::NotInitialized));
-        invoice_contract.require_auth();
+        let pool = Self::require_pool_auth(&env);
 
-        let pool: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::PoolContract)
-            .unwrap_or_else(|| panic_with_error!(&env, EscrowError::NotInitialized));
-
-        if repayment_amount == 0 {
+        if repayment_amount == 0 || repayment_amount > i128::MAX as u128 {
             panic_with_error!(&env, EscrowError::InvalidAmount);
         }
 
@@ -349,6 +336,9 @@ impl EscrowContract {
         }
 
         let usdc = Self::usdc_client(&env);
+        if record.amount > i128::MAX as u128 {
+            panic_with_error!(&env, EscrowError::InvalidAmount);
+        }
         usdc.transfer(
             &env.current_contract_address(),
             &pool,
