@@ -1657,6 +1657,30 @@ impl InvoiceContract {
         Self::get_invoice(&env, invoice_id).buyer
     }
 
+    /// Returns the due date of an invoice.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `invoice_id` - The invoice to query.
+    ///
+    /// # Auth
+    /// No authorization is required.
+    ///
+    /// # Panics
+    /// * `InvoiceError::NotInitialized` if the contract has not been initialized.
+    /// * `InvoiceError::NotFound` if the invoice cannot be found.
+    ///
+    /// # Returns
+    /// * `u64` - The invoice due date as a Unix timestamp.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let due = client.get_due_date(&invoice_id);
+    /// ```
+    pub fn get_due_date(env: Env, invoice_id: BytesN<32>) -> u64 {
+        Self::get_invoice(&env, invoice_id).due_date
+    }
+
     pub fn transfer_ownership(env: Env, new_admin: Address) {
         let admin: Address = env
             .storage()
