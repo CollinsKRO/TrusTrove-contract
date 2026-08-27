@@ -382,12 +382,39 @@ impl InvoiceContract {
         env.storage().persistent().remove(&key);
     }
 
+    /// Checks if a given asset is currently supported for financing.
+    ///
+    /// # Arguments
+    ///
+    /// * `env` - The environment context.
+    /// * `asset` - The address of the asset to check.
+    ///
+    /// # Auth
+    ///
+    /// This is a read-only function and does not require authorization.
+    ///
+    /// # Returns
+    ///
+    /// True if the asset is supported, false otherwise.
     pub fn is_supported_asset(env: Env, asset: Address) -> bool {
         env.storage()
             .persistent()
             .has(&DataKey::SupportedAsset(asset))
     }
 
+    /// Gets the total number of supported financing assets.
+    ///
+    /// # Arguments
+    ///
+    /// * `env` - The environment context.
+    ///
+    /// # Auth
+    ///
+    /// This is a read-only function and does not require authorization.
+    ///
+    /// # Returns
+    ///
+    /// The number of supported assets as a u32.
     pub fn get_supported_asset_count(env: Env) -> u32 {
         env.storage()
             .instance()
@@ -806,7 +833,11 @@ impl InvoiceContract {
         funded_amount: u128,
     ) -> bool {
         pool_address.require_auth();
-        let configured_pool: Address = env.storage().instance().get(&DataKey::PoolContract).unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
+        let configured_pool: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PoolContract)
+            .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotFound));
         if pool_address != configured_pool {
             panic_with_error!(&env, InvoiceError::NotAuthorized);
         }
@@ -1118,6 +1149,25 @@ impl InvoiceContract {
     ///
     /// # Returns
     /// * `bool` - `true` when early repayment is completed.
+    /// Repays an invoice early, applying a pro-rated discount refund.
+    ///
+    /// # Arguments
+    ///
+    /// * `env` - The environment context.
+    /// * `invoice_id` - The unique identifier of the invoice being repaid early.
+    ///
+    /// # Auth
+    ///
+    /// Requires authorization from the `buyer` address associated with the invoice.
+    ///
+    /// # Panics
+    ///
+    /// * `InvoiceError::NotFound` if the invoice, pool, or funding timestamp does not exist.
+    /// * `InvoiceError::InvalidStatusTransition` if the invoice is not in the `Confirmed` status or if `now >= due_date`.
+    ///
+    /// # Returns
+    ///
+    /// A boolean indicating whether the early repayment was successful.
     pub fn repay_early(env: Env, invoice_id: BytesN<32>) -> bool {
         let inv_key = DataKey::Invoice(invoice_id.clone());
         let invoice: Invoice = env
