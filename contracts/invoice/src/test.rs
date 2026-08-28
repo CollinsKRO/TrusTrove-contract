@@ -2454,6 +2454,7 @@ fn test_create_fails_uninitialized_registry() {
 #[should_panic(expected = "Error(Contract, #2)")]
 fn test_create_fails_missing_counter() {
     let env = Env::default();
+    env.mock_all_auths();
 
     let registry_id = env.register_contract(None, MockRegistry);
     let registry_client = MockRegistryClient::new(&env, &registry_id);
@@ -2466,7 +2467,8 @@ fn test_create_fails_missing_counter() {
     let contract_id = env.register_contract(None, InvoiceContract);
     let client = InvoiceContractClient::new(&env, &contract_id);
 
-    let _admin = Address::generate(&env);
+    let admin = Address::generate(&env);
+    client.initialize(&admin, &registry_id);
 
     let usdc = Address::generate(&env);
     client.add_supported_asset(&usdc);
