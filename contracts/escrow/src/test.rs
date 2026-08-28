@@ -203,6 +203,114 @@ fn test_initialize_twice_panics() {
     client.initialize(&admin2, &pool2, &usdc2);
 }
 
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_initialize_panics_when_pool_equals_usdc() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let pool = Address::generate(&env);
+    let usdc = pool.clone();
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &pool, &usdc);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_initialize_panics_when_pool_equals_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let pool = admin.clone();
+    let usdc = env.register_contract(None, MockToken);
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &pool, &usdc);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #8)")]
+fn test_initialize_panics_when_usdc_equals_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let pool = Address::generate(&env);
+    let _usdc = env.register_contract(None, MockToken);
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &pool, &admin);
+}
+
+#[test]
+fn test_get_admin_returns_stored_admin() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = env.register_contract(None, MockCaller);
+    let pool = env.register_contract(None, MockCaller);
+    let usdc_id = env.register_contract(None, MockToken);
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin.clone(), &pool, &usdc_id);
+
+    assert_eq!(client.get_admin(), admin);
+}
+
+#[test]
+fn test_get_pool_contract_returns_stored_pool() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = env.register_contract(None, MockCaller);
+    let pool = env.register_contract(None, MockCaller);
+    let usdc_id = env.register_contract(None, MockToken);
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &pool.clone(), &usdc_id);
+
+    assert_eq!(client.get_pool_contract(), pool);
+}
+
+#[test]
+fn test_get_usdc_asset_returns_stored_usdc() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = env.register_contract(None, MockCaller);
+    let pool = env.register_contract(None, MockCaller);
+    let usdc_id = env.register_contract(None, MockToken);
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.initialize(&admin, &pool, &usdc_id.clone());
+
+    assert_eq!(client.get_usdc_asset(), usdc_id);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_get_admin_panics_when_not_initialized() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.get_admin();
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_get_pool_contract_panics_when_not_initialized() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.get_pool_contract();
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #6)")]
+fn test_get_usdc_asset_panics_when_not_initialized() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, EscrowContract);
+    let client = EscrowContractClient::new(&env, &contract_id);
+    client.get_usdc_asset();
+}
+
 // ============================================================================
 // Lock Tests
 // ============================================================================

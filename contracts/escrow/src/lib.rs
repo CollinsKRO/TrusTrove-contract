@@ -32,6 +32,7 @@ impl EscrowContract {
     ///
     /// # Panics
     /// * `AlreadyInitialized` if the contract has already been initialized.
+    /// * `InvalidConfig` if `pool_contract`, `usdc_asset`, and `admin` are not distinct addresses.
     ///
     /// # Returns
     /// * `()` - No value is returned.
@@ -43,6 +44,9 @@ impl EscrowContract {
     pub fn initialize(env: Env, admin: Address, pool_contract: Address, usdc_asset: Address) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic_with_error!(&env, EscrowError::AlreadyInitialized);
+        }
+        if pool_contract == usdc_asset || pool_contract == admin || usdc_asset == admin {
+            panic_with_error!(&env, EscrowError::InvalidConfig);
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
@@ -87,6 +91,56 @@ impl EscrowContract {
         env.storage()
             .instance()
             .get(&DataKey::UsdcAsset)
+            .unwrap_or_else(|| panic_with_error!(&env, EscrowError::NotInitialized))
+    }
+
+    /// Returns the admin address this escrow contract was initialized with.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    ///
+    /// # Auth
+    /// None. This is a read-only view.
+    ///
+    /// # Panics
+    /// * `NotInitialized` if the contract has not been initialized.
+    ///
+    /// # Returns
+    /// * `Address` - The admin address.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let admin = client.get_admin();
+    /// ```
+    pub fn get_admin(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, EscrowError::NotInitialized))
+    }
+
+    /// Returns the pool contract address this escrow contract was initialized with.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    ///
+    /// # Auth
+    /// None. This is a read-only view.
+    ///
+    /// # Panics
+    /// * `NotInitialized` if the contract has not been initialized.
+    ///
+    /// # Returns
+    /// * `Address` - The pool contract address.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let pool = client.get_pool_contract();
+    /// ```
+    pub fn get_pool_contract(env: Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&DataKey::PoolContract)
             .unwrap_or_else(|| panic_with_error!(&env, EscrowError::NotInitialized))
     }
 
@@ -412,6 +466,25 @@ impl EscrowContract {
             .unwrap_or(0)
     }
 
+    /// Returns the history of escrow events for an invoice.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `invoice_id` - The invoice to query.
+    ///
+    /// # Auth
+    /// None. This is a read-only view.
+    ///
+    /// # Panics
+    /// Does not panic.
+    ///
+    /// # Returns
+    /// * `Vec<EscrowEvent>` - The history of escrow events for the invoice, or an empty vector if none exist.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let history = client.get_history(&invoice_id);
+    /// ```
     pub fn get_history(env: Env, invoice_id: BytesN<32>) -> Vec<EscrowEvent> {
         let key = DataKey::History(invoice_id);
         env.storage()

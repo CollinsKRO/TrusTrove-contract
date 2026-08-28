@@ -312,6 +312,31 @@ impl InvoiceContract {
         env.storage().instance().get(&DataKey::EscrowContract)
     }
 
+    /// Returns the attestation for a given invoice, if one exists.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment.
+    /// * `invoice_id` - The invoice to query.
+    ///
+    /// # Auth
+    /// No authorization is required.
+    ///
+    /// # Panics
+    /// Does not panic.
+    ///
+    /// # Returns
+    /// * `Option<Attestation>` - The attestation if one exists, or `None`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let attestation = client.get_attestation(&invoice_id);
+    /// ```
+    pub fn get_attestation(env: Env, invoice_id: BytesN<32>) -> Option<Attestation> {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Attestation(invoice_id))
+    }
+
     pub fn add_supported_asset(env: Env, asset: Address) {
         let admin: Address = env
             .storage()
