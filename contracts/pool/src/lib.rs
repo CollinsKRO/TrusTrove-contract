@@ -549,6 +549,7 @@ impl PoolContract {
         let mut args = Vec::new(&env);
         args.push_back(invoice_id.clone().into_val(&env));
         args.push_back(funded_amount.into_val(&env));
+        args.push_back(issuer.into_val(&env));
         let _: bool = env.invoke_contract(&escrow_contract, &Symbol::new(&env, "lock"), args);
 
         let pool_address = env.current_contract_address();
