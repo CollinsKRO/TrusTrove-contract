@@ -2316,12 +2316,7 @@ fn test_double_initialize_panics() {
         invoke: &MockAuthInvoke {
             contract: &escrow_id,
             fn_name: "initialize",
-            args: (
-                admin.clone(),
-                pool_id.clone(),
-                usdc_id.clone(),
-            )
-                .into_val(&env),
+            args: (admin.clone(), pool_id.clone(), usdc_id.clone()).into_val(&env),
             sub_invokes: &[],
         },
     }]);
