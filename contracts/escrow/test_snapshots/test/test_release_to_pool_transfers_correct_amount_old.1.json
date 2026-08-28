@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 5,
+    "address": 6,
     "nonce": 0
   },
   "auth": [
@@ -30,6 +30,8 @@
         }
       ]
     ],
+    [],
+    [],
     [
       [
         "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
@@ -40,7 +42,7 @@
               "function_name": "lock",
               "args": [
                 {
-                  "bytes": "0000000000000004000000000000000000000000000000000000000000000000"
+                  "bytes": "0000000000000001000000000000000000000000000000000000000000000000"
                 },
                 {
                   "u128": {
@@ -58,6 +60,7 @@
         }
       ]
     ],
+    [],
     []
   ],
   "ledger": {
@@ -358,7 +361,7 @@
                   "symbol": "History"
                 },
                 {
-                  "bytes": "0000000000000004000000000000000000000000000000000000000000000000"
+                  "bytes": "0000000000000001000000000000000000000000000000000000000000000000"
                 }
               ]
             },
@@ -378,7 +381,7 @@
                       "symbol": "History"
                     },
                     {
-                      "bytes": "0000000000000004000000000000000000000000000000000000000000000000"
+                      "bytes": "0000000000000001000000000000000000000000000000000000000000000000"
                     }
                   ]
                 },
@@ -421,7 +424,7 @@
                             "symbol": "invoice_id"
                           },
                           "val": {
-                            "bytes": "0000000000000004000000000000000000000000000000000000000000000000"
+                            "bytes": "0000000000000001000000000000000000000000000000000000000000000000"
                           }
                         },
                         {
@@ -453,7 +456,7 @@
                   "symbol": "Locked"
                 },
                 {
-                  "bytes": "0000000000000004000000000000000000000000000000000000000000000000"
+                  "bytes": "0000000000000001000000000000000000000000000000000000000000000000"
                 }
               ]
             },
@@ -473,7 +476,7 @@
                       "symbol": "Locked"
                     },
                     {
-                      "bytes": "0000000000000004000000000000000000000000000000000000000000000000"
+                      "bytes": "0000000000000001000000000000000000000000000000000000000000000000"
                     }
                   ]
                 },
@@ -496,7 +499,7 @@
                         "symbol": "invoice_id"
                       },
                       "val": {
-                        "bytes": "0000000000000004000000000000000000000000000000000000000000000000"
+                        "bytes": "0000000000000001000000000000000000000000000000000000000000000000"
                       }
                     },
                     {
@@ -595,6 +598,38 @@
       ],
       [
         {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+            "key": "ledger_key_contract_instance",
+            "durability": "persistent"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4",
+                "key": "ledger_key_contract_instance",
+                "durability": "persistent",
+                "val": {
+                  "contract_instance": {
+                    "executable": {
+                      "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    },
+                    "storage": null
+                  }
+                }
+              }
+            },
+            "ext": "v0"
+          },
+          4095
+        ]
+      ],
+      [
+        {
           "contract_code": {
             "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
           }
@@ -686,6 +721,110 @@
                 "symbol": "fn_call"
               },
               {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000004"
+              },
+              {
+                "symbol": "balance"
+              }
+            ],
+            "data": {
+              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000004",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "balance"
+              }
+            ],
+            "data": {
+              "i128": {
+                "hi": 0,
+                "lo": 10000000000000
+              }
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000004"
+              },
+              {
+                "symbol": "balance"
+              }
+            ],
+            "data": {
+              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000004",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "balance"
+              }
+            ],
+            "data": {
+              "i128": {
+                "hi": 0,
+                "lo": 0
+              }
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
                 "bytes": "0000000000000000000000000000000000000000000000000000000000000005"
               },
               {
@@ -695,7 +834,7 @@
             "data": {
               "vec": [
                 {
-                  "bytes": "0000000000000004000000000000000000000000000000000000000000000000"
+                  "bytes": "0000000000000001000000000000000000000000000000000000000000000000"
                 },
                 {
                   "u128": {
@@ -785,7 +924,7 @@
                 "symbol": "funds_locked"
               },
               {
-                "bytes": "0000000000000004000000000000000000000000000000000000000000000000"
+                "bytes": "0000000000000001000000000000000000000000000000000000000000000000"
               },
               {
                 "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
@@ -837,14 +976,14 @@
                 "symbol": "fn_call"
               },
               {
-                "bytes": "0000000000000000000000000000000000000000000000000000000000000005"
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000004"
               },
               {
-                "symbol": "get_locked"
+                "symbol": "balance"
               }
             ],
             "data": {
-              "bytes": "0000000000000004000000000000000000000000000000000000000000000000"
+              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
             }
           }
         }
@@ -854,7 +993,7 @@
     {
       "event": {
         "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000005",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000004",
         "type_": "diagnostic",
         "body": {
           "v0": {
@@ -863,13 +1002,65 @@
                 "symbol": "fn_return"
               },
               {
-                "symbol": "get_locked"
+                "symbol": "balance"
               }
             ],
             "data": {
-              "u128": {
+              "i128": {
                 "hi": 0,
-                "lo": 1000000000
+                "lo": 9999000000000
+              }
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": null,
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_call"
+              },
+              {
+                "bytes": "0000000000000000000000000000000000000000000000000000000000000004"
+              },
+              {
+                "symbol": "balance"
+              }
+            ],
+            "data": {
+              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
+            }
+          }
+        }
+      },
+      "failed_call": false
+    },
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000004",
+        "type_": "diagnostic",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "fn_return"
+              },
+              {
+                "symbol": "balance"
+              }
+            ],
+            "data": {
+              "i128": {
+                "hi": 0,
+                "lo": 0
               }
             }
           }

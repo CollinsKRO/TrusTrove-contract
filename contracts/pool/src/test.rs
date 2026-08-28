@@ -223,7 +223,7 @@ fn setup() -> TestEnv {
     invoice.initialize(&admin, &registry_id);
 
     let escrow = RealEscrowClient::new(&env, &escrow_id);
-    escrow.initialize(&admin, &pool_id, &invoice_id, &usdc_id);
+    escrow.initialize(&admin, &pool_id, &usdc_id);
 
     let pool = PoolContractClient::new(&env, &pool_id);
     pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id, &registry_id);
@@ -908,7 +908,7 @@ fn test_default_max_utilization_in_stats() {
     let usdc_id = env.register_contract(None, MockToken);
     RealInvoiceClient::new(&env, &invoice_id).initialize(&admin, &registry_id);
     let pool_id = env.register_contract(None, PoolContract);
-    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &invoice_id, &usdc_id);
+    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &usdc_id);
     let pool = PoolContractClient::new(&env, &pool_id);
     pool.initialize(&admin, &invoice_id, &escrow_id, &usdc_id, &registry_id);
     let stats = pool.get_stats();
@@ -1406,6 +1406,7 @@ fn test_handle_default_active_count_underflow_panics() {
                 invoice_id: phantom_id.clone(),
                 amount: funded_amount,
                 locked_at: te.env.ledger().timestamp(),
+                issuer: Address::generate(&te.env),
             },
         );
     });
@@ -2262,7 +2263,7 @@ fn test_deposit_extends_instance_ttl_when_below_threshold() {
     RealInvoiceClient::new(&env, &invoice_id).initialize(&admin, &registry_id);
 
     let pool_id = env.register_contract(None, PoolContract);
-    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &invoice_id, &usdc_id);
+    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &usdc_id);
 
     // Before initialize: TTL is the default of ~4096 ledgers.
     let ttl_before = env.as_contract(&pool_id, || env.storage().instance().get_ttl());
@@ -2315,17 +2316,11 @@ fn test_double_initialize_panics() {
         invoke: &MockAuthInvoke {
             contract: &escrow_id,
             fn_name: "initialize",
-            args: (
-                admin.clone(),
-                pool_id.clone(),
-                invoice_id.clone(),
-                usdc_id.clone(),
-            )
-                .into_val(&env),
+            args: (admin.clone(), pool_id.clone(), usdc_id.clone()).into_val(&env),
             sub_invokes: &[],
         },
     }]);
-    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &invoice_id, &usdc_id);
+    RealEscrowClient::new(&env, &escrow_id).initialize(&admin, &pool_id, &usdc_id);
 
     // First pool initialize — succeeds with explicit auth
     env.mock_auths(&[MockAuth {
@@ -2496,7 +2491,7 @@ mod real_registry_integration {
         invoice.initialize(&admin, &registry_id);
 
         let escrow = RealEscrowClient::new(&env, &escrow_id);
-        escrow.initialize(&admin, &pool_id, &invoice_id_addr, &usdc_id);
+        escrow.initialize(&admin, &pool_id, &usdc_id);
 
         let pool = PoolContractClient::new(&env, &pool_id);
         pool.initialize(&admin, &invoice_id_addr, &escrow_id, &usdc_id, &registry_id);
