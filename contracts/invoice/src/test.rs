@@ -2907,7 +2907,7 @@ fn test_get_due_date_uninitialized_panics() {
 #[test]
 fn test_remove_supported_asset() {
     let (env, client, _, _, _, usdc) = setup();
-    
+
     assert!(client.is_supported_asset(&usdc));
     client.remove_supported_asset(&usdc);
     assert!(!client.is_supported_asset(&usdc));
@@ -2927,7 +2927,7 @@ fn test_remove_supported_asset() {
 fn test_set_escrow_contract() {
     let (env, client, _, _, _, _) = setup();
     let new_escrow = Address::generate(&env);
-    
+
     let old_escrow = client.get_escrow_contract();
     client.set_escrow_contract(&new_escrow);
     assert_eq!(client.get_escrow_contract(), Some(new_escrow.clone()));
@@ -2937,7 +2937,12 @@ fn test_set_escrow_contract() {
     assert_eq!(event_contract, client.address);
     assert_eq!(
         topics,
-        (Symbol::new(&env, "escrow_contract_updated"), old_escrow.unwrap_or(new_escrow.clone()), new_escrow.clone()).into_val(&env)
+        (
+            Symbol::new(&env, "escrow_contract_updated"),
+            old_escrow.unwrap_or(new_escrow.clone()),
+            new_escrow.clone()
+        )
+            .into_val(&env)
     );
     <()>::try_from_val(&env, &data).unwrap();
 }

@@ -285,12 +285,12 @@ impl InvoiceContract {
             .get(&DataKey::Admin)
             .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotInitialized));
         admin.require_auth();
-        
+
         let old_escrow: Option<Address> = env.storage().instance().get(&DataKey::EscrowContract);
         env.storage()
             .instance()
             .set(&DataKey::EscrowContract, &escrow_contract);
-            
+
         if let Some(old) = old_escrow {
             events::escrow_contract_updated(&env, &old, &escrow_contract);
         } else {

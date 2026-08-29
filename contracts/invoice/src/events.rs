@@ -159,7 +159,11 @@ pub fn supported_asset_removed(env: &Env, asset: &Address) {
 
 pub fn escrow_contract_updated(env: &Env, old: &Address, new: &Address) {
     env.events().publish(
-        (Symbol::new(env, "escrow_contract_updated"), old.clone(), new.clone()),
+        (
+            Symbol::new(env, "escrow_contract_updated"),
+            old.clone(),
+            new.clone(),
+        ),
         (),
     );
 }
