@@ -162,7 +162,8 @@ impl InvoiceContract {
             events::pool_contract_updated(&env, &old, &pool_contract);
         } else {
             events::pool_contract_updated(&env, &pool_contract, &pool_contract);
-        }
+            Self::extend_instance_ttl(&env);
+    }
     }
 
     /// Returns the stored pool contract address, or `None` if not configured.
@@ -233,7 +234,8 @@ impl InvoiceContract {
                 &agent_registry_contract,
                 &agent_registry_contract,
             );
-        }
+            Self::extend_instance_ttl(&env);
+    }
     }
 
     /// Returns the stored agent-registry contract address, or `None` if not configured.
@@ -288,6 +290,7 @@ impl InvoiceContract {
         env.storage()
             .instance()
             .set(&DataKey::EscrowContract, &escrow_contract);
+        Self::extend_instance_ttl(&env);
     }
 
     /// Returns the stored escrow contract address, or `None` if not configured.
@@ -359,6 +362,7 @@ impl InvoiceContract {
             .instance()
             .set(&DataKey::SupportedAssetCount, &(count + 1));
         env.storage().persistent().set(&key, &true);
+        Self::extend_instance_ttl(&env);
     }
 
     pub fn remove_supported_asset(env: Env, asset: Address) {
@@ -383,6 +387,7 @@ impl InvoiceContract {
             .instance()
             .set(&DataKey::SupportedAssetCount, &(count - 1));
         env.storage().persistent().remove(&key);
+        Self::extend_instance_ttl(&env);
     }
 
     pub fn is_supported_asset(env: Env, asset: Address) -> bool {
