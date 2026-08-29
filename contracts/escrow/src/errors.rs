@@ -17,4 +17,6 @@ pub enum EscrowError {
     NotInitialized = 6,
     /// Returned when releasing funds to a recipient that is invalid (e.g., not the invoice issuer).
     InvalidRecipient = 7,
+    /// Returned when attempting to initialize with colliding addresses (e.g., pool_contract == usdc_asset).
+    InvalidConfig = 8,
 }
