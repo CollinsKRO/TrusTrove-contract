@@ -1384,7 +1384,7 @@ fn test_status_transitions_full_lifecycle() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #13)")]
+#[should_panic(expected = "Error(Contract, #16)")]
 fn test_mark_funded_fails_asset_mismatch() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + DEFAULT_DUE_OFFSET;
@@ -2932,7 +2932,6 @@ fn test_mark_funded_fails_zero_amount() {
     let pool = mock_pool_with_asset(&env, &usdc);
     client.set_pool_contract(&pool);
     client.mark_funded(&invoice_id, &pool, &usdc, &0);
-
 }
 #[test]
 fn test_remove_supported_asset() {
@@ -2975,5 +2974,44 @@ fn test_set_escrow_contract() {
             .into_val(&env)
     );
     <()>::try_from_val(&env, &data).unwrap();
+}
 
+#[test]
+fn test_mark_funded_success_face_value() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + DEFAULT_DUE_OFFSET;
+    let invoice_id = client.create(&issuer, &buyer, &DEFAULT_FACE_VALUE, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
+    client.list_for_financing(&invoice_id, &DEFAULT_DISCOUNT_BPS);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &DEFAULT_FACE_VALUE);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #16)")]
+fn test_mark_funded_fails_above_face_value() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + DEFAULT_DUE_OFFSET;
+    let invoice_id = client.create(&issuer, &buyer, &DEFAULT_FACE_VALUE, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
+    client.list_for_financing(&invoice_id, &DEFAULT_DISCOUNT_BPS);
+
+    let pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&pool);
+    client.mark_funded(&invoice_id, &pool, &usdc, &(DEFAULT_FACE_VALUE + 1));
+}
+
+#[test]
+fn test_mark_funded_success_configured_pool() {
+    let (env, client, issuer, buyer, _, usdc) = setup();
+    let due_date = env.ledger().timestamp() + DEFAULT_DUE_OFFSET;
+    let invoice_id = client.create(&issuer, &buyer, &DEFAULT_FACE_VALUE, &due_date, &usdc);
+    attest(&env, &client, &invoice_id);
+    client.list_for_financing(&invoice_id, &DEFAULT_DISCOUNT_BPS);
+
+    let configured_pool = mock_pool_with_asset(&env, &usdc);
+    client.set_pool_contract(&configured_pool);
+    client.mark_funded(&invoice_id, &configured_pool, &usdc, &DEFAULT_FUNDED_AMOUNT);
 }
