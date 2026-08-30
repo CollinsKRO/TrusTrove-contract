@@ -2275,6 +2275,15 @@ fn test_add_supported_asset() {
     client.add_supported_asset(&asset);
     assert!(client.is_supported_asset(&asset));
     assert_eq!(client.get_supported_asset_count(), 2);
+
+    let events = env.events().all();
+    let (event_contract, topics, data) = events.last().expect("expected at least one event");
+    assert_eq!(event_contract, client.address);
+    assert_eq!(
+        topics,
+        (Symbol::new(&env, "supported_asset_added"), asset.clone()).into_val(&env)
+    );
+    <()>::try_from_val(&env, &data).unwrap();
 }
 
 // ============================== REPAY TESTS ==============================
@@ -2923,4 +2932,48 @@ fn test_mark_funded_fails_zero_amount() {
     let pool = mock_pool_with_asset(&env, &usdc);
     client.set_pool_contract(&pool);
     client.mark_funded(&invoice_id, &pool, &usdc, &0);
+
+}
+#[test]
+fn test_remove_supported_asset() {
+    let (env, client, _, _, _, usdc) = setup();
+
+    assert!(client.is_supported_asset(&usdc));
+    client.remove_supported_asset(&usdc);
+    assert!(!client.is_supported_asset(&usdc));
+    assert_eq!(client.get_supported_asset_count(), 0);
+
+    let events = env.events().all();
+    let (event_contract, topics, data) = events.last().expect("expected at least one event");
+    assert_eq!(event_contract, client.address);
+    assert_eq!(
+        topics,
+        (Symbol::new(&env, "supported_asset_removed"), usdc.clone()).into_val(&env)
+    );
+    <()>::try_from_val(&env, &data).unwrap();
+}
+
+#[test]
+fn test_set_escrow_contract() {
+    let (env, client, _, _, _, _) = setup();
+    let new_escrow = Address::generate(&env);
+
+    let old_escrow = client.get_escrow_contract();
+    client.set_escrow_contract(&new_escrow);
+    assert_eq!(client.get_escrow_contract(), Some(new_escrow.clone()));
+
+    let events = env.events().all();
+    let (event_contract, topics, data) = events.last().expect("expected at least one event");
+    assert_eq!(event_contract, client.address);
+    assert_eq!(
+        topics,
+        (
+            Symbol::new(&env, "escrow_contract_updated"),
+            old_escrow.unwrap_or(new_escrow.clone()),
+            new_escrow.clone()
+        )
+            .into_val(&env)
+    );
+    <()>::try_from_val(&env, &data).unwrap();
+
 }

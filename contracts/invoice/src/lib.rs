@@ -285,9 +285,17 @@ impl InvoiceContract {
             .get(&DataKey::Admin)
             .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotInitialized));
         admin.require_auth();
+
+        let old_escrow: Option<Address> = env.storage().instance().get(&DataKey::EscrowContract);
         env.storage()
             .instance()
             .set(&DataKey::EscrowContract, &escrow_contract);
+
+        if let Some(old) = old_escrow {
+            events::escrow_contract_updated(&env, &old, &escrow_contract);
+        } else {
+            events::escrow_contract_updated(&env, &escrow_contract, &escrow_contract);
+        }
     }
 
     /// Returns the stored escrow contract address, or `None` if not configured.
@@ -370,6 +378,7 @@ impl InvoiceContract {
             .instance()
             .set(&DataKey::SupportedAssetCount, &(count + 1));
         env.storage().persistent().set(&key, &true);
+        events::supported_asset_added(&env, &asset);
     }
 
     /// Removes an asset from the list of supported funding assets.
@@ -405,6 +414,7 @@ impl InvoiceContract {
             .instance()
             .set(&DataKey::SupportedAssetCount, &(count - 1));
         env.storage().persistent().remove(&key);
+        events::supported_asset_removed(&env, &asset);
     }
 
     /// Checks if a given asset is currently supported for financing.
