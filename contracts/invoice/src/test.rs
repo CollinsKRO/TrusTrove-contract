@@ -1384,7 +1384,7 @@ fn test_status_transitions_full_lifecycle() {
 }
 
 #[test]
-#[should_panic(expected = "Error(Contract, #16)")]
+#[should_panic(expected = "Error(Contract, #13)")]
 fn test_mark_funded_fails_asset_mismatch() {
     let (env, client, issuer, buyer, _, usdc) = setup();
     let due_date = env.ledger().timestamp() + DEFAULT_DUE_OFFSET;
