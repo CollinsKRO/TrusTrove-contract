@@ -287,10 +287,19 @@ impl InvoiceContract {
             .get(&DataKey::Admin)
             .unwrap_or_else(|| panic_with_error!(&env, InvoiceError::NotInitialized));
         admin.require_auth();
+
+        let old_escrow: Option<Address> = env.storage().instance().get(&DataKey::EscrowContract);
         env.storage()
             .instance()
             .set(&DataKey::EscrowContract, &escrow_contract);
         Self::extend_instance_ttl(&env);
+
+        if let Some(old) = old_escrow {
+            events::escrow_contract_updated(&env, &old, &escrow_contract);
+        } else {
+            events::escrow_contract_updated(&env, &escrow_contract, &escrow_contract);
+        }
+
     }
 
     /// Returns the stored escrow contract address, or `None` if not configured.
@@ -363,6 +372,8 @@ impl InvoiceContract {
             .set(&DataKey::SupportedAssetCount, &(count + 1));
         env.storage().persistent().set(&key, &true);
         Self::extend_instance_ttl(&env);
+        events::supported_asset_added(&env, &asset);
+
     }
 
     pub fn remove_supported_asset(env: Env, asset: Address) {
@@ -388,6 +399,8 @@ impl InvoiceContract {
             .set(&DataKey::SupportedAssetCount, &(count - 1));
         env.storage().persistent().remove(&key);
         Self::extend_instance_ttl(&env);
+        events::supported_asset_removed(&env, &asset);
+
     }
 
     pub fn is_supported_asset(env: Env, asset: Address) -> bool {
