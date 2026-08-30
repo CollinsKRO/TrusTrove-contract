@@ -162,6 +162,7 @@ impl InvoiceContract {
             events::pool_contract_updated(&env, &old, &pool_contract);
         } else {
             events::pool_contract_updated(&env, &pool_contract, &pool_contract);
+            Self::extend_instance_ttl(&env);
         }
     }
 
@@ -233,6 +234,7 @@ impl InvoiceContract {
                 &agent_registry_contract,
                 &agent_registry_contract,
             );
+            Self::extend_instance_ttl(&env);
         }
     }
 
@@ -290,6 +292,7 @@ impl InvoiceContract {
         env.storage()
             .instance()
             .set(&DataKey::EscrowContract, &escrow_contract);
+        Self::extend_instance_ttl(&env);
 
         if let Some(old) = old_escrow {
             events::escrow_contract_updated(&env, &old, &escrow_contract);
@@ -367,6 +370,7 @@ impl InvoiceContract {
             .instance()
             .set(&DataKey::SupportedAssetCount, &(count + 1));
         env.storage().persistent().set(&key, &true);
+        Self::extend_instance_ttl(&env);
         events::supported_asset_added(&env, &asset);
     }
 
@@ -392,6 +396,7 @@ impl InvoiceContract {
             .instance()
             .set(&DataKey::SupportedAssetCount, &(count - 1));
         env.storage().persistent().remove(&key);
+        Self::extend_instance_ttl(&env);
         events::supported_asset_removed(&env, &asset);
     }
 
