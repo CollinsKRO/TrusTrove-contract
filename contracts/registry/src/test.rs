@@ -827,6 +827,20 @@ fn test_verify_profile_unknown_panics() {
 }
 
 #[test]
+#[should_panic(expected = "Error(Auth, InvalidAction)")]
+fn test_verify_profile_wrong_auth_panics() {
+    let (env, client) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+    let issuer = Address::generate(&env);
+    client.register_issuer(&issuer, &map![&env]);
+
+    // Clear all mocked auths — a non-admin caller should be rejected
+    env.set_auths(&[]);
+    client.verify_profile(&issuer, &true);
+}
+
+#[test]
 fn test_get_verification_status_unregistered() {
     let (env, client) = setup();
     let admin = Address::generate(&env);
