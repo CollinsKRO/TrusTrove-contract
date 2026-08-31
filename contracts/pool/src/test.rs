@@ -1230,7 +1230,7 @@ fn test_receive_repayment_exact_funded_amount_has_no_yield() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "Error(Context, InvalidAction)")]
 fn test_receive_repayment_requires_invoice_contract_authorization() {
     let te = setup();
     te.pool.deposit(&te.lp, &100_000_000_000);
@@ -1667,7 +1667,7 @@ fn test_handle_default_rejects_when_escrow_reports_no_release() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "Error(Context, InvalidAction)")]
 fn test_handle_default_requires_invoice_contract_authorization() {
     let te = setup();
     te.pool.deposit(&te.lp, &100_000_000_000);
