@@ -969,20 +969,18 @@ fn test_fund_invoice_allowed_when_below_cap() {
 #[test]
 fn test_fund_invoice_is_permissionless() {
     // Verify that fund_invoice can be called by any address without admin authorization.
-    // Setup normally (with mock_all_auths) so initialization succeeds, then test with a non-admin caller.
+    // Setup normally (with mock_all_auths) so initialization succeeds, then test with no auths.
     let te = setup();
     te.pool.deposit(&te.lp, &100_000_000_000);
     let invoice_id = create_and_list(&te, &te.usdc_id);
 
-    // The default setup already tested that admin can call fund_invoice.
-    // What we're verifying is that the auth requirement was REMOVED.
-    // If admin.require_auth() was still in the code, it would fail.
-    // Since we're calling it in a setup that uses mock_all_auths, if it works,
-    // the auth requirement is gone.
+    // Clear all mocked auths so that any require_auth() call would fail.
+    // If admin.require_auth() was still in the code, this would panic.
+    te.env.set_auths(&[]);
     let result = te.pool.fund_invoice(&invoice_id);
     assert!(
         result,
-        "fund_invoice should succeed (no admin auth required)"
+        "fund_invoice should succeed without any mocked auths (no admin auth required)"
     );
 
     // Verify the invoice was actually funded
