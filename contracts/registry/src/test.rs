@@ -1873,7 +1873,10 @@ fn metadata_entries_with_empty_field(
 ) -> impl Strategy<Value = std::vec::Vec<(std::string::String, std::string::String)>> {
     prop::collection::vec(
         (
-            prop_oneof![Just(std::string::String::new()), "[a-zA-Z][a-zA-Z0-9_]{0,9}"],
+            prop_oneof![
+                Just(std::string::String::new()),
+                "[a-zA-Z][a-zA-Z0-9_]{0,9}"
+            ],
             prop_oneof![Just(std::string::String::new()), "[a-zA-Z0-9_]{1,20}"],
         ),
         1..=5,
@@ -1951,9 +1954,7 @@ fn prop_metadata_empty_key_or_value_always_rejected() {
 
             let metadata = build_metadata(&env, &entries);
 
-            let has_empty = entries
-                .iter()
-                .any(|(k, v)| k.is_empty() || v.is_empty());
+            let has_empty = entries.iter().any(|(k, v)| k.is_empty() || v.is_empty());
 
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 client.register_issuer(&address, &metadata);
